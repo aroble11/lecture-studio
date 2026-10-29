@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: process.env.META_API_KEY,
-  baseURL: "https://api.meta.ai/v1",
+  baseURL: process.env.META_API_BASE_URL ?? "https://api.meta.ai/v1",
 });
 
 const response = await client.chat.completions.create({
