@@ -45,3 +45,6 @@ next-env.d.ts
 
 # local test recordings (teacher voice — keep private)
 /test-audio/
+
+# local test images
+/test-images/
