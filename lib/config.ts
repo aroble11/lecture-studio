@@ -30,3 +30,12 @@ export const ASR = {
   maxKeywords: 50,
   maxKeywordLength: 80,
 } as const;
+
+export const GENERATION = {
+  /** Reasoning effort for materials generation. Wonder rejects "none". Oct 31: "low" took ~4.5 s on a toy prompt. */
+  effort: "medium" as "minimal" | "low" | "medium" | "high",
+  /** Output cap — full materials for a long lecture run a few thousand tokens plus reasoning. */
+  maxOutputTokens: 16_000,
+  /** Largest transcript body the route accepts (a 90-min lecture is ~100 KB of JSON). */
+  maxBodyBytes: 1_000_000,
+} as const;

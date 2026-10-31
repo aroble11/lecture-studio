@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
+import type { GenerateResult, LessonContext } from "@/lib/materials";
+import MaterialsView from "./MaterialsView";
 
 const MAX_FILE_MB = 300;
 const MAX_MINUTES = 90;
@@ -14,6 +16,12 @@ type Status =
   | { kind: "transcribing"; done: number; total: number }
   | { kind: "done"; seconds: number }
   | { kind: "error"; message: string };
+type GenStatus =
+  | { kind: "idle" }
+  | { kind: "generating"; startedAt: number }
+  | { kind: "error"; message: string };
+
+const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
 
 export default function LectureCapture() {
   const [audio, setAudio] = useState<Audio | null>(null);
@@ -22,6 +30,10 @@ export default function LectureCapture() {
   const [keywords, setKeywords] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [durationMs, setDurationMs] = useState(0);
+  const [lesson, setLesson] = useState({ subject: "", grade: "", objective: "", standards: "" });
+  const [gen, setGen] = useState<GenStatus>({ kind: "idle" });
+  const [genElapsed, setGenElapsed] = useState(0);
+  const [result, setResult] = useState<GenerateResult | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -36,7 +48,34 @@ export default function LectureCapture() {
       return { blob, url, label };
     });
     setTurns([]);
+    setResult(null);
+    setGen({ kind: "idle" });
     setStatus({ kind: "idle" });
+  }
+
+  const vocabulary = () => keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+
+  async function generate() {
+    const startedAt = Date.now();
+    setGen({ kind: "generating", startedAt });
+    setGenElapsed(0);
+    const tick = setInterval(() => setGenElapsed(Date.now() - startedAt), 1000);
+    try {
+      const context: LessonContext = { ...lesson, vocabulary: vocabulary() };
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ turns, context }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.materials) throw new Error(data?.error ?? `Generation failed (HTTP ${res.status})`);
+      setResult(data as GenerateResult);
+      setGen({ kind: "idle" });
+    } catch (err) {
+      setGen({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
+    } finally {
+      clearInterval(tick);
+    }
   }
 
   async function startRecording() {
@@ -93,11 +132,11 @@ export default function LectureCapture() {
         throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(ms)}.`);
       }
       setDurationMs(ms);
-      const kws = keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-      const result = await transcribeLecture(samples, kws, {
+      const transcript = await transcribeLecture(samples, vocabulary(), {
         onProgress: (p) => setStatus({ kind: "transcribing", ...p }),
       });
-      setTurns(result);
+      setTurns(transcript);
+      setResult(null);
       setStatus({ kind: "done", seconds: (Date.now() - started) / 1000 });
     } catch (err) {
       const message =
@@ -143,17 +182,38 @@ export default function LectureCapture() {
       </div>
 
       <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="text-lg font-semibold">2. Key vocabulary <span className="font-normal text-zinc-500">(optional)</span></h2>
+        <h2 className="text-lg font-semibold">2. About this lesson <span className="font-normal text-zinc-500">(optional)</span></h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Names and terms from this lesson, separated by commas. Helps the transcript spell them right.
+          Helps the transcript spell key terms right and fits the materials to your class.
         </p>
-        <textarea
-          value={keywords}
-          onChange={(e) => setKeywords(e.target.value)}
-          rows={2}
-          placeholder="Articles of Confederation, Shays' Rebellion, ratification"
-          className="mt-3 w-full rounded-lg border border-zinc-300 bg-transparent p-3 text-sm dark:border-zinc-700"
-        />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium">
+            Subject
+            <input value={lesson.subject} onChange={(e) => setLesson({ ...lesson, subject: e.target.value })} placeholder="U.S. History" className={inputClass} />
+          </label>
+          <label className="text-sm font-medium">
+            Grade
+            <input value={lesson.grade} onChange={(e) => setLesson({ ...lesson, grade: e.target.value })} placeholder="10" className={inputClass} />
+          </label>
+          <label className="text-sm font-medium sm:col-span-2">
+            Lesson objective
+            <input value={lesson.objective} onChange={(e) => setLesson({ ...lesson, objective: e.target.value })} placeholder="Students can explain why the Articles of Confederation were replaced" className={inputClass} />
+          </label>
+          <label className="text-sm font-medium sm:col-span-2">
+            Standards
+            <input value={lesson.standards} onChange={(e) => setLesson({ ...lesson, standards: e.target.value })} placeholder="e.g. C3 D2.His.14.9-12" className={inputClass} />
+          </label>
+          <label className="text-sm font-medium sm:col-span-2">
+            Key vocabulary <span className="font-normal text-zinc-500">(names and terms, separated by commas)</span>
+            <textarea
+              value={keywords}
+              onChange={(e) => setKeywords(e.target.value)}
+              rows={2}
+              placeholder="Articles of Confederation, Shays' Rebellion, ratification"
+              className={inputClass}
+            />
+          </label>
+        </div>
         <button
           onClick={transcribe}
           disabled={!audio || busy || recording}
@@ -195,6 +255,25 @@ export default function LectureCapture() {
           </ol>
         </div>
       )}
+
+      {turns.length > 0 && (
+        <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+          <h2 className="text-lg font-semibold">3. Generate materials</h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Guided notes, a 5-question check for understanding, an exit ticket, and tomorrow&apos;s bell ringer.
+          </p>
+          <button
+            onClick={generate}
+            disabled={gen.kind === "generating" || busy}
+            className="mt-4 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            {gen.kind === "generating" ? `Generating… ${formatTime(genElapsed)}` : result ? "Regenerate" : "Generate materials"}
+          </button>
+          {gen.kind === "error" && <p className="mt-3 text-sm text-red-600">{gen.message}</p>}
+        </div>
+      )}
+
+      {result && <MaterialsView result={result} />}
     </section>
   );
 }
