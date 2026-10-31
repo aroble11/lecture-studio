@@ -42,3 +42,6 @@ next-env.d.ts
 
 # private planning docs
 /Lecture Studio*Handoff*.md
+
+# local test recordings (teacher voice — keep private)
+/test-audio/
