@@ -4,8 +4,8 @@
 import { ASR } from "@/lib/config";
 import { transcribePcm } from "@/lib/meta-asr";
 
-// One ~60 s chunk at 4x takes ~15 s; leave headroom for slow handshakes.
-export const maxDuration = 60;
+// One ~60 s chunk at 2x takes ~30 s (max 75 s chunk ≈ 40 s); leave headroom for slow handshakes.
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   const apiKey = process.env.META_API_KEY;

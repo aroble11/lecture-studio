@@ -17,8 +17,11 @@ export const META_ASR_URL = "wss://api.meta.ai/v1/asr/realtime";
 export const ASR = {
   /** PCM16 mono 24 kHz — the only format the realtime ASR takes besides 16 kHz. */
   sampleRate: 24_000,
-  /** Send speed as a multiple of real time. 4x tested clean on Oct 31; unpaced added stutters. */
-  speed: 4,
+  /** Send speed as a multiple of real time. Oct 31 tests: 2x clean in 5/5 runs; 4x stuttered
+   *  ("left left", "an an") or merged turns in 2/3 runs; unpaced stuttered. */
+  speed: 2,
+  /** Chunks transcribed at once from the browser. 6 parallel sessions tested OK on Oct 31. */
+  concurrency: 6,
   /** Packet length sent over the socket. */
   packetMs: 80,
   /** Max chunk the API route accepts (Vercel caps request bodies at 4.5 MB). ~83 s of audio. */
