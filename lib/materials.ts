@@ -23,6 +23,8 @@ export type Materials = {
   quiz: { question: string; choices: string[]; answerIndex: number; explanation: string }[];
   exitTicket: { question: string; sampleAnswer: string }[];
   bellRinger: { prompt: string; teacherNote: string };
+  /** One note per labeled item in the reference image (empty when there is no image). */
+  diagramNotes: { n: number; note: string }[];
 };
 
 export type GenerateResult = { materials: Materials; model: string; seconds: number };
@@ -46,4 +48,5 @@ export const MATERIALS_SCHEMA = obj({
   quiz: arr(obj({ question: str, choices: arr(str), answerIndex: int, explanation: str })),
   exitTicket: arr(obj({ question: str, sampleAnswer: str })),
   bellRinger: obj({ prompt: str, teacherNote: str }),
+  diagramNotes: arr(obj({ n: int, note: str })),
 });

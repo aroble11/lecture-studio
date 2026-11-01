@@ -2,16 +2,27 @@
 
 import { useState } from "react";
 import { formatTime } from "@/lib/audio-client";
+import type { DiagramResult } from "@/lib/diagram";
 import type { GenerateResult } from "@/lib/materials";
+import DiagramView from "./DiagramView";
 
-const TABS = ["Guided Notes", "CFU Quiz", "Exit Ticket", "Bell Ringer"] as const;
-type Tab = (typeof TABS)[number];
+const BASE_TABS = ["Guided Notes", "CFU Quiz", "Exit Ticket", "Bell Ringer"] as const;
+type Tab = (typeof BASE_TABS)[number] | "Label the Diagram";
 const LETTERS = "ABCDEFGH";
 
-export default function MaterialsView({ result }: { result: GenerateResult }) {
+export default function MaterialsView({
+  result,
+  diagram,
+}: {
+  result: GenerateResult;
+  /** Reference image analyzed before generation; adds the "Label the Diagram" tab when it has items. */
+  diagram?: { image: string; result: DiagramResult } | null;
+}) {
   const [tab, setTab] = useState<Tab>("Guided Notes");
   const [answers, setAnswers] = useState(false);
   const { materials: m } = result;
+  const hasDiagram = !!diagram && diagram.result.items.length > 0;
+  const TABS: Tab[] = hasDiagram ? [...BASE_TABS, "Label the Diagram"] : [...BASE_TABS];
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
@@ -113,6 +124,10 @@ export default function MaterialsView({ result }: { result: GenerateResult }) {
               </li>
             ))}
           </ol>
+        )}
+
+        {tab === "Label the Diagram" && hasDiagram && (
+          <DiagramView image={diagram.image} diagram={diagram.result} notes={m.diagramNotes ?? []} answers={answers} />
         )}
 
         {tab === "Bell Ringer" && (

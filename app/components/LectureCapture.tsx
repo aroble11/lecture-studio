@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
+import type { DiagramContext, DiagramResult } from "@/lib/diagram";
+import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
 import MaterialsView from "./MaterialsView";
 
@@ -16,6 +18,8 @@ type Status =
   | { kind: "transcribing"; done: number; total: number }
   | { kind: "done"; seconds: number }
   | { kind: "error"; message: string };
+type RefImage = PreparedImage & { name: string };
+type ImageStatus = { kind: "idle" } | { kind: "analyzing" } | { kind: "error"; message: string };
 type GenStatus =
   | { kind: "idle" }
   | { kind: "generating"; startedAt: number }
@@ -34,6 +38,12 @@ export default function LectureCapture() {
   const [gen, setGen] = useState<GenStatus>({ kind: "idle" });
   const [genElapsed, setGenElapsed] = useState(0);
   const [result, setResult] = useState<GenerateResult | null>(null);
+  const [refImage, setRefImage] = useState<RefImage | null>(null);
+  const [diagram, setDiagram] = useState<DiagramResult | null>(null);
+  const [imageStatus, setImageStatus] = useState<ImageStatus>({ kind: "idle" });
+  /** Image + labels as they were when the current materials were generated. */
+  const [resultDiagram, setResultDiagram] = useState<{ image: string; result: DiagramResult } | null>(null);
+  const labelRef = useRef<{ image: RefImage; promise: Promise<DiagramResult | null> } | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -55,6 +65,55 @@ export default function LectureCapture() {
 
   const vocabulary = () => keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
 
+  /** Wonder names the objects in the image, SAM 3.1 boxes them. Runs as soon as an image is added. */
+  function analyzeImage(img: RefImage) {
+    setDiagram(null);
+    setImageStatus({ kind: "analyzing" });
+    const context: LessonContext = { ...lesson, vocabulary: vocabulary() };
+    const promise = (async () => {
+      try {
+        const res = await fetch("/api/label", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ image: img.dataUrl, context }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.summary) throw new Error(data?.error ?? `Image analysis failed (HTTP ${res.status})`);
+        if (labelRef.current?.image !== img) return null; // replaced or removed meanwhile
+        setDiagram(data as DiagramResult);
+        setImageStatus({ kind: "idle" });
+        return data as DiagramResult;
+      } catch (err) {
+        if (labelRef.current?.image === img) {
+          setImageStatus({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
+        }
+        return null;
+      }
+    })();
+    labelRef.current = { image: img, promise };
+  }
+
+  async function onImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const prepared = await prepareImage(file);
+      const img: RefImage = { ...prepared, name: file.name };
+      setRefImage(img);
+      analyzeImage(img);
+    } catch {
+      setImageStatus({ kind: "error", message: "This browser couldn't read that image. Try a JPEG or PNG." });
+    }
+  }
+
+  function removeImage() {
+    labelRef.current = null;
+    setRefImage(null);
+    setDiagram(null);
+    setImageStatus({ kind: "idle" });
+  }
+
   async function generate() {
     const startedAt = Date.now();
     setGen({ kind: "generating", startedAt });
@@ -62,14 +121,22 @@ export default function LectureCapture() {
     const tick = setInterval(() => setGenElapsed(Date.now() - startedAt), 1000);
     try {
       const context: LessonContext = { ...lesson, vocabulary: vocabulary() };
+      // If the reference image is still being analyzed, wait for it so its labels shape the materials.
+      const pending = labelRef.current;
+      const labeled = pending ? await pending.promise : null;
+      const img = pending?.image ?? null;
+      const diagramContext: DiagramContext | undefined = labeled?.items.length
+        ? { summary: labeled.summary, items: labeled.items.map(({ n, label }) => ({ n, label })) }
+        : undefined;
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turns, context }),
+        body: JSON.stringify({ turns, context, diagram: diagramContext }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.materials) throw new Error(data?.error ?? `Generation failed (HTTP ${res.status})`);
       setResult(data as GenerateResult);
+      setResultDiagram(labeled && img && diagramContext ? { image: img.dataUrl, result: labeled } : null);
       setGen({ kind: "idle" });
     } catch (err) {
       setGen({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
@@ -213,6 +280,40 @@ export default function LectureCapture() {
               className={inputClass}
             />
           </label>
+          <div className="text-sm sm:col-span-2">
+            <span className="font-medium">Reference image</span>{" "}
+            <span className="text-zinc-500">(a slide, worksheet, diagram, or photo — we&apos;ll find objects to label)</span>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <label className="cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                {refImage ? "Replace image" : "Add image"}
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onImage} className="hidden" />
+              </label>
+              {refImage && (
+                <button onClick={removeImage} className="text-zinc-500 underline hover:text-zinc-900 dark:hover:text-zinc-100">
+                  Remove
+                </button>
+              )}
+            </div>
+            {refImage && (
+              <div className="mt-3 flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local data URL preview */}
+                <img src={refImage.dataUrl} alt="" className="h-20 w-auto rounded border border-zinc-200 dark:border-zinc-800" />
+                <div className="text-zinc-600 dark:text-zinc-400">
+                  <p className="font-medium text-zinc-900 dark:text-zinc-100">{refImage.name}</p>
+                  {imageStatus.kind === "analyzing" && <p>Finding objects to label…</p>}
+                  {imageStatus.kind === "error" && <p className="text-red-600">{imageStatus.message}</p>}
+                  {diagram && diagram.items.length > 0 && (
+                    <p>
+                      {diagram.items.length} items to label: {diagram.items.map((d) => d.label).join(", ")}
+                    </p>
+                  )}
+                  {diagram && diagram.items.length === 0 && (
+                    <p>{diagram.kind === "mostly_text" ? "This image is mostly writing — nothing to label." : "No objects to label were found."}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <button
           onClick={transcribe}
@@ -260,7 +361,8 @@ export default function LectureCapture() {
         <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
           <h2 className="text-lg font-semibold">3. Generate materials</h2>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Guided notes, a 5-question check for understanding, an exit ticket, and tomorrow&apos;s bell ringer.
+            Guided notes, a 5-question check for understanding, an exit ticket, and tomorrow&apos;s bell ringer
+            {refImage ? ", plus a label-the-diagram activity from your image" : ""}.
           </p>
           <button
             onClick={generate}
@@ -273,7 +375,7 @@ export default function LectureCapture() {
         </div>
       )}
 
-      {result && <MaterialsView result={result} />}
+      {result && <MaterialsView result={result} diagram={resultDiagram} />}
     </section>
   );
 }

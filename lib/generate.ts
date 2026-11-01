@@ -2,6 +2,7 @@
 // Muse Wonder (falls back to Muse Spark on failure). Needs META_API_KEY — never import from client code.
 import OpenAI from "openai";
 import { GENERATION, MODELS } from "./config";
+import type { DiagramContext } from "./diagram";
 import type { Turn } from "./meta-asr";
 import { MATERIALS_SCHEMA, type GenerateResult, type LessonContext, type Materials } from "./materials";
 
@@ -25,14 +26,18 @@ quiz: exactly 5 multiple-choice check-for-understanding questions, 4 choices eac
 - Do not reuse a choice across questions. Distractors should be plausible to a student who missed the lesson.
 - "explanation" says in one sentence why the answer is right.
 exitTicket: 1 or 2 short-answer questions that check the lesson objective, each with a brief sampleAnswer.
-bellRinger: a 3-5 minute warm-up for the NEXT class that has students recall or apply today's lesson. "teacherNote" says in one sentence how to run it.`;
+bellRinger: a 3-5 minute warm-up for the NEXT class that has students recall or apply today's lesson. "teacherNote" says in one sentence how to run it.
+diagramNotes: only when a reference image with numbered labeled items is given — one entry per item (n = its number),
+a one-sentence student-facing note on that item: connect it to what the lecture taught when the lecture covers it,
+otherwise say briefly what it shows. Return [] when no reference image is given.
+When a reference image is given, you may also use its labeled terms in the guided notes and quiz where the lecture covers them.`;
 
 function clock(ms: number) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function buildInput(turns: Turn[], ctx: LessonContext) {
+function buildInput(turns: Turn[], ctx: LessonContext, diagram?: DiagramContext) {
   const lines = [
     ["Subject", ctx.subject],
     ["Grade", ctx.grade],
@@ -43,7 +48,10 @@ function buildInput(turns: Turn[], ctx: LessonContext) {
     .filter(([, v]) => v && String(v).trim())
     .map(([k, v]) => `${k}: ${String(v).trim()}`);
   const transcript = turns.map((t) => `[${clock(t.startMs)}] ${t.text}`).join("\n");
-  return `${lines.length ? `Lesson context:\n${lines.join("\n")}\n\n` : ""}Transcript:\n${transcript}`;
+  const image = diagram?.items.length
+    ? `Reference image: ${diagram.summary}\nLabeled items:\n${diagram.items.map((d) => `${d.n}. ${d.label}`).join("\n")}\n\n`
+    : "";
+  return `${lines.length ? `Lesson context:\n${lines.join("\n")}\n\n` : ""}${image}Transcript:\n${transcript}`;
 }
 
 function shuffle<T>(a: T[]) {
@@ -55,7 +63,7 @@ function shuffle<T>(a: T[]) {
 }
 
 /** Light cleanup so the UI can trust the shape: blanks present, answers valid, choices shuffled. */
-function normalize(m: Materials): Materials {
+function normalize(m: Materials, diagram?: DiagramContext): Materials {
   for (const s of m.guidedNotes.sections) {
     s.startSec = Math.max(0, Math.round(s.startSec || 0));
     s.items = s.items.filter((it) => it.text.trim() && it.answer.trim());
@@ -76,6 +84,14 @@ function normalize(m: Materials): Materials {
       return { ...q, choices, answerIndex: choices.indexOf(correct) };
     });
   m.exitTicket = m.exitTicket.slice(0, 2);
+
+  const valid = new Set(diagram?.items.map((d) => d.n) ?? []);
+  const seen = new Set<number>();
+  m.diagramNotes = (m.diagramNotes ?? []).filter((d) => {
+    if (!valid.has(d.n) || seen.has(d.n) || !d.note?.trim()) return false;
+    seen.add(d.n);
+    return true;
+  });
   return m;
 }
 
@@ -95,10 +111,10 @@ async function callModel(client: OpenAI, model: string, input: string): Promise<
 export async function generateMaterials(
   turns: Turn[],
   ctx: LessonContext,
-  opts: { apiKey: string; baseURL?: string },
+  opts: { apiKey: string; baseURL?: string; diagram?: DiagramContext },
 ): Promise<GenerateResult> {
   const client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL ?? "https://api.meta.ai/v1" });
-  const input = buildInput(turns, ctx);
+  const input = buildInput(turns, ctx, opts.diagram);
   const t0 = Date.now();
   let model: string = MODELS.generation;
   let materials: Materials;
@@ -109,5 +125,5 @@ export async function generateMaterials(
     model = MODELS.generationFallback;
     materials = await callModel(client, model, input);
   }
-  return { materials: normalize(materials), model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+  return { materials: normalize(materials, opts.diagram), model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }

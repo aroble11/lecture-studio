@@ -39,3 +39,17 @@ export const GENERATION = {
   /** Largest transcript body the route accepts (a 90-min lecture is ~100 KB of JSON). */
   maxBodyBytes: 1_000_000,
 } as const;
+
+export const LABELING = {
+  /** Wonder effort for naming objects in a reference image. Oct 31: "low" took ~7.5 s on a worksheet. */
+  effort: "low" as "minimal" | "low" | "medium" | "high",
+  maxOutputTokens: 4_000,
+  /** Most objects to label in one image (one SAM request each, sent in parallel). */
+  maxItems: 6,
+  /** Drop SAM boxes below this confidence. */
+  minScore: 0.5,
+  /** The browser shrinks images so the longest side is at most this many pixels. */
+  maxImageSide: 1600,
+  /** Largest image the route accepts as a base64 data URL (Vercel caps request bodies at 4.5 MB). */
+  maxBodyBytes: 4_000_000,
+} as const;

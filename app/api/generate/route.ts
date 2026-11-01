@@ -1,8 +1,10 @@
 // POST /api/generate
-// Body (JSON): { turns: [{ startMs, endMs, text }], context?: { subject, grade, objective, standards, vocabulary[] } }
+// Body (JSON): { turns: [{ startMs, endMs, text }], context?: { subject, grade, objective, standards, vocabulary[] },
+//               diagram?: { summary, items: [{ n, label }] } }
 // Returns: { materials, model, seconds } — see lib/materials.ts.
 import { GENERATION } from "@/lib/config";
 import { generateMaterials } from "@/lib/generate";
+import type { DiagramContext } from "@/lib/diagram";
 import type { LessonContext } from "@/lib/materials";
 import type { Turn } from "@/lib/meta-asr";
 
@@ -20,7 +22,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Transcript too large" }, { status: 413 });
   }
 
-  let body: { turns?: unknown; context?: Record<string, unknown> };
+  let body: { turns?: unknown; context?: Record<string, unknown>; diagram?: { summary?: unknown; items?: unknown } };
   try {
     body = await request.json();
   } catch {
@@ -43,8 +45,21 @@ export async function POST(request: Request) {
       : undefined,
   };
 
+  const d = body.diagram;
+  const items = (Array.isArray(d?.items) ? d.items : [])
+    .filter((i): i is { n: number; label: string } => Number.isInteger(i?.n) && typeof i?.label === "string")
+    .slice(0, 12)
+    .map((i) => ({ n: i.n, label: i.label.trim().slice(0, 80) }));
+  const diagram: DiagramContext | undefined = items.length
+    ? { summary: text(d?.summary, 300) ?? "", items }
+    : undefined;
+
   try {
-    const result = await generateMaterials(turns, context, { apiKey, baseURL: process.env.META_API_BASE_URL });
+    const result = await generateMaterials(turns, context, {
+      apiKey,
+      baseURL: process.env.META_API_BASE_URL,
+      diagram,
+    });
     return Response.json(result);
   } catch (err) {
     console.error("[generate]", err);
