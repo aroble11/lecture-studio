@@ -137,6 +137,26 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
   return m;
 }
 
+/** Models sometimes stamp every section 0:00 (Spark Open at low effort did). Check each section against the
+ *  transcript: it can't start before the first line that contains one of its answers. Keeps time order. */
+function fixSectionTimes(m: Materials, turns: Turn[]) {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const lines = turns.map((t) => ({ sec: Math.floor(t.startMs / 1000), text: ` ${norm(t.text)} ` }));
+  let prev = 0;
+  for (const s of m.guidedNotes.sections) {
+    const hits = s.items
+      .map((it) => norm(it.answer))
+      .filter(Boolean)
+      .map((a) => lines.find((l) => l.text.includes(` ${a} `))?.sec)
+      .filter((sec): sec is number => sec !== undefined);
+    const earliest = hits.length ? Math.min(...hits) : undefined;
+    // Trust the model unless its time is earlier than where the section's content first appears.
+    if (earliest !== undefined && earliest > s.startSec) s.startSec = earliest;
+    s.startSec = Math.max(prev, s.startSec);
+    prev = s.startSec;
+  }
+}
+
 /** Throws when cleanup left a tab empty, so the caller falls back instead of showing a blank tab. */
 function assertComplete(model: string, raw: Materials, m: Materials) {
   const problems: string[] = [];
@@ -204,6 +224,11 @@ async function callOpenModel(client: OpenAI, input: string, diagram?: DiagramCon
   return materials;
 }
 
+function finish(m: Materials, turns: Turn[]): Materials {
+  fixSectionTimes(m, turns);
+  return m;
+}
+
 /** Privacy Mode: the transcript goes only to the open-weight model. One retry on the same model, never Meta's API. */
 export async function generatePrivately(
   turns: Turn[],
@@ -220,7 +245,7 @@ export async function generatePrivately(
     console.warn(`[generate] ${PRIVACY.model} failed, retrying once (Privacy Mode — no Meta fallback):`, err);
     materials = await callOpenModel(client, input, opts.diagram);
   }
-  return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
+  return { materials: finish(materials, turns), model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
 }
 
 export async function generateMaterials(
@@ -240,5 +265,5 @@ export async function generateMaterials(
     model = MODELS.generationFallback;
     materials = await callModel(client, model, input, opts.diagram);
   }
-  return { materials, model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+  return { materials: finish(materials, turns), model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }
