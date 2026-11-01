@@ -14,13 +14,14 @@ Use only content the teacher actually taught. Do not add facts the lecture did n
 Write for the grade level given; if none is given, infer it from the lecture.
 Cover every topic in the transcript, even ones outside the stated subject.
 Scale to the lecture: a short lecture gets fewer sections and items. Never pad to reach a count.
-Every sentence must state a fact from the lecture on its own. Never refer to "the lesson", "the teacher", "the lecture", "the event" or "this topic".
+In student-facing materials (guidedNotes, quiz, exitTicket, bellRinger, diagramNotes), every sentence must state a fact from the lecture on its own. Never refer to "the lesson", "the teacher", "the lecture", "the event" or "this topic" there.
 
 guidedNotes: student fill-in-the-blank notes that follow the lecture in order.
 - 1 to 6 sections, each with a short heading. startSec = the [m:ss] timestamp of the transcript line where that section's topic is first discussed, converted to seconds. Sections must be in time order.
 - 2 to 6 items per section. Each item is one sentence containing exactly one blank written as "${BLANK}"; "answer" is the key term or fact that fills it.
 - Blank only content words a student must learn: key vocabulary, names, dates, causes, effects. Never blank a common word when a key term is available.
 - Every answer must be different.
+- wordBank: when the teacher profile asks for a word bank or similar language support, list every answer exactly as written, in alphabetical order; otherwise [].
 quiz: exactly 5 multiple-choice check-for-understanding questions, 4 choices each (answerIndex is 0-based).
 - Exactly one choice is correct. Every other choice must be clearly wrong according to the lecture — never a choice that is also true. Check each distractor against the transcript.
 - Do not reuse a choice across questions. Distractors should be plausible to a student who missed the lesson.
@@ -30,7 +31,17 @@ bellRinger: a 3-5 minute warm-up for the NEXT class that has students recall or 
 diagramNotes: only when a reference image with numbered labeled items is given — one entry per item (n = its number),
 a one-sentence student-facing note on that item: connect it to what the lecture taught when the lecture covers it,
 otherwise say briefly what it shows. Return [] when no reference image is given.
-When a reference image is given, you may also use its labeled terms in the guided notes and quiz where the lecture covers them.`;
+When a teacher profile is given, follow its style and class notes (reading level, tone, supports such as word banks or sentence starters) wherever they don't conflict with the rules here.
+When a reference image is given, you may also use its labeled terms in the guided notes and quiz where the lecture covers them.
+
+Teacher-facing feedback (write to the teacher as "you"; be specific, kind, and brief):
+pacingFeedback: 1 to 3 short observations about time use, based on the [m:ss] timestamps — which topics got the most and least time,
+and any key idea that was rushed (covered in a few seconds) or ran long. Name the topic and its time. Do not comment on speaking speed.
+contentGaps: concepts mentioned but not explained enough for students at this grade — a term used without a definition,
+a claim without a cause, effect or example, or a key vocabulary word or part of the lesson objective that was never taught.
+The transcript is machine-made: a number, name or phrase that breaks off mid-way is a transcription glitch, not a gap — never report it.
+0 to 4 entries, most important first. atSec = the [m:ss] timestamp of the line where the concept comes up, in seconds.
+issue = one sentence on what is missing; suggestion = one sentence on what to add next time. Return [] when every concept was explained.`;
 
 function clock(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -47,11 +58,17 @@ function buildInput(turns: Turn[], ctx: LessonContext, diagram?: DiagramContext)
   ]
     .filter(([, v]) => v && String(v).trim())
     .map(([k, v]) => `${k}: ${String(v).trim()}`);
+  const profile = [
+    ["Teaching style", ctx.style],
+    ["About the class", ctx.classNotes],
+  ]
+    .filter(([, v]) => v && String(v).trim())
+    .map(([k, v]) => `${k}: ${String(v).trim()}`);
   const transcript = turns.map((t) => `[${clock(t.startMs)}] ${t.text}`).join("\n");
   const image = diagram?.items.length
     ? `Reference image: ${diagram.summary}\nLabeled items:\n${diagram.items.map((d) => `${d.n}. ${d.label}`).join("\n")}\n\n`
     : "";
-  return `${lines.length ? `Lesson context:\n${lines.join("\n")}\n\n` : ""}${image}Transcript:\n${transcript}`;
+  return `${lines.length ? `Lesson context:\n${lines.join("\n")}\n\n` : ""}${profile.length ? `Teacher profile:\n${profile.join("\n")}\n\n` : ""}${image}Transcript:\n${transcript}`;
 }
 
 function shuffle<T>(a: T[]) {
@@ -74,6 +91,13 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
     }
   }
   m.guidedNotes.sections = m.guidedNotes.sections.filter((s) => s.items.length > 0);
+  // Keep the word bank honest: exactly the answers that are still in the notes, no extras.
+  if (m.guidedNotes.wordBank?.length) {
+    const answers = m.guidedNotes.sections.flatMap((s) => s.items.map((it) => it.answer.trim()));
+    m.guidedNotes.wordBank = [...new Set(answers)].sort((a, b) => a.localeCompare(b));
+  } else {
+    m.guidedNotes.wordBank = [];
+  }
 
   m.quiz = m.quiz
     .filter((q) => q.choices.length >= 2 && q.answerIndex >= 0 && q.answerIndex < q.choices.length)
@@ -84,6 +108,11 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
       return { ...q, choices, answerIndex: choices.indexOf(correct) };
     });
   m.exitTicket = m.exitTicket.slice(0, 2);
+  m.pacingFeedback = (m.pacingFeedback ?? []).map((f) => f.trim()).filter(Boolean).slice(0, 3);
+  m.contentGaps = (m.contentGaps ?? [])
+    .filter((g) => g.concept?.trim() && g.issue?.trim())
+    .slice(0, 4)
+    .map((g) => ({ ...g, atSec: Math.max(0, Math.round(g.atSec || 0)) }));
 
   const valid = new Set(diagram?.items.map((d) => d.n) ?? []);
   const seen = new Set<number>();

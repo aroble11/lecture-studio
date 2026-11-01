@@ -43,6 +43,8 @@ export async function POST(request: Request) {
     vocabulary: Array.isArray(c.vocabulary)
       ? c.vocabulary.map((v) => text(v, 80)).filter((v): v is string => !!v).slice(0, 50)
       : undefined,
+    style: text(c.style, 600),
+    classNotes: text(c.classNotes, 600),
   };
 
   const d = body.diagram;

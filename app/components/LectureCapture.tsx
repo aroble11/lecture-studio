@@ -5,8 +5,10 @@ import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } f
 import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
+import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
 import { clearSession, loadSession, saveSession } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
+import ProfileCard from "./ProfileCard";
 
 const MAX_FILE_MB = 300;
 const MAX_MINUTES = 90;
@@ -50,12 +52,16 @@ export default function LectureCapture() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** False until the saved session has been read, so the empty first render doesn't overwrite it. */
   const [restored, setRestored] = useState(false);
+  const [profile, setProfile] = useState<TeacherProfile | null>(null);
 
   // Restore the last session after a page refresh.
   useEffect(() => {
     let cancelled = false;
     loadSession().then((saved) => {
       if (cancelled) return;
+      const prof = loadProfile();
+      setProfile(prof);
+      if (!saved && prof) setLesson((l) => ({ ...l, subject: prof.subject, grade: prof.grade }));
       if (saved) {
         if (saved.audio) setAudio({ ...saved.audio, url: URL.createObjectURL(saved.audio.blob) });
         setKeywords(saved.keywords);
@@ -93,6 +99,12 @@ export default function LectureCapture() {
     return () => clearTimeout(t);
   }, [restored, audio, keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram]);
 
+  function onSaveProfile(p: TeacherProfile) {
+    setProfile(p);
+    // Fill blanks in the current lesson; never overwrite what the teacher typed for this lecture.
+    setLesson((l) => ({ ...l, subject: l.subject || p.subject, grade: l.grade || p.grade }));
+  }
+
   function startOver() {
     if (!window.confirm("Clear the audio, transcript, image, and materials and start a new lecture?")) return;
     if (audio) URL.revokeObjectURL(audio.url);
@@ -100,7 +112,7 @@ export default function LectureCapture() {
     setAudio(null);
     setStatus({ kind: "idle" });
     setKeywords("");
-    setLesson({ subject: "", grade: "", objective: "", standards: "" });
+    setLesson({ subject: profile?.subject ?? "", grade: profile?.grade ?? "", objective: "", standards: "" });
     setTurns([]);
     setDurationMs(0);
     setGen({ kind: "idle" });
@@ -133,7 +145,7 @@ export default function LectureCapture() {
   function analyzeImage(img: RefImage) {
     setDiagram(null);
     setImageStatus({ kind: "analyzing" });
-    const context: LessonContext = { ...lesson, vocabulary: vocabulary() };
+    const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
     const promise = (async () => {
       try {
         const res = await fetch("/api/label", {
@@ -184,7 +196,7 @@ export default function LectureCapture() {
     setGenElapsed(0);
     const tick = setInterval(() => setGenElapsed(Date.now() - startedAt), 1000);
     try {
-      const context: LessonContext = { ...lesson, vocabulary: vocabulary() };
+      const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
       // If the reference image is still being analyzed, wait for it so its labels shape the materials.
       const pending = labelRef.current;
       const labeled = pending ? await pending.promise : null;
@@ -282,6 +294,7 @@ export default function LectureCapture() {
 
   return (
     <section className="flex flex-col gap-6">
+      {restored && <ProfileCard profile={profile} onSave={onSaveProfile} />}
       {(audio || turns.length > 0 || refImage || result) && (
         <div className="-mb-3 flex justify-end">
           <button onClick={startOver} disabled={busy || recording || gen.kind === "generating"} className="text-sm text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
@@ -446,7 +459,7 @@ export default function LectureCapture() {
         </div>
       )}
 
-      {result && <MaterialsView result={result} diagram={resultDiagram} />}
+      {result && <MaterialsView result={result} diagram={resultDiagram} turns={turns} durationMs={durationMs} />}
     </section>
   );
 }
