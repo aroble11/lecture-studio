@@ -41,6 +41,11 @@ export default function MaterialsView({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">Materials</h2>
         <span className="text-sm text-zinc-500">
+          {result.privacy && (
+            <span className="mr-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+              Privacy Mode
+            </span>
+          )}
           {result.model} · {result.seconds.toFixed(0)} s
         </span>
       </div>

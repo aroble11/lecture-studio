@@ -1,7 +1,7 @@
 // Server-only: turns a timestamped transcript + lesson context into classroom materials with
 // Muse Wonder (falls back to Muse Spark on failure). Needs META_API_KEY — never import from client code.
 import OpenAI from "openai";
-import { GENERATION, MODELS } from "./config";
+import { GENERATION, MODELS, PRIVACY } from "./config";
 import type { DiagramContext } from "./diagram";
 import type { Turn } from "./meta-asr";
 import { MATERIALS_SCHEMA, type GenerateResult, type LessonContext, type Materials } from "./materials";
@@ -85,7 +85,20 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
     s.startSec = Math.max(0, Math.round(s.startSec || 0));
     s.items = s.items.filter((it) => it.text.trim() && it.answer.trim());
     for (const it of s.items) {
-      if (it.text.includes(BLANK)) continue;
+      if (it.text.includes(BLANK)) {
+        // "the Federalist _____" + answer "Federalist Papers" → "the _____" (the answer already holds those words)
+        const words = it.answer.trim().split(/\s+/);
+        for (let k = words.length - 1; k >= 1; k--) {
+          const lead = words.slice(0, k).join(" ");
+          const before = `${lead} ${BLANK}`;
+          const at = it.text.toLowerCase().indexOf(before.toLowerCase());
+          if (at >= 0 && (at === 0 || /\s/.test(it.text[at - 1]))) {
+            it.text = it.text.slice(0, at) + BLANK + it.text.slice(at + before.length);
+            break;
+          }
+        }
+        continue;
+      }
       const i = it.text.toLowerCase().indexOf(it.answer.toLowerCase());
       it.text = i >= 0 ? it.text.slice(0, i) + BLANK + it.text.slice(i + it.answer.length) : `${it.text} ${BLANK}`;
     }
@@ -156,6 +169,58 @@ async function callModel(client: OpenAI, model: string, input: string, diagram?:
   const materials = normalize(structuredClone(raw), diagram);
   assertComplete(model, raw, materials);
   return materials;
+}
+
+/** Privacy Mode call: Chat Completions on Baseten. Docs say Spark Open lacks structured outputs, but json_schema
+ *  worked in testing — parse defensively anyway (strip prose/code fences around the object). */
+async function callOpenModel(client: OpenAI, input: string, diagram?: DiagramContext): Promise<Materials> {
+  const res = await client.chat.completions.create({
+    model: PRIVACY.model,
+    max_tokens: PRIVACY.maxOutputTokens,
+    reasoning_effort: PRIVACY.effort,
+    messages: [
+      {
+        role: "system",
+        content: `${INSTRUCTIONS}\n\nReply with only one JSON object that matches this JSON Schema — no prose, no code fences:\n${JSON.stringify(MATERIALS_SCHEMA)}`,
+      },
+      { role: "user", content: input },
+    ],
+    response_format: { type: "json_schema", json_schema: { name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
+  });
+  const choice = res.choices[0];
+  if (choice?.finish_reason === "length") throw new Error(`${PRIVACY.model} ran out of output tokens`);
+  const text = choice?.message.content ?? "";
+  const start = text.indexOf("{"), end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error(`${PRIVACY.model} returned no JSON`);
+  const raw = JSON.parse(text.slice(start, end + 1)) as Materials;
+  // Schema isn't guaranteed here — make the shape safe for normalize() before trusting it.
+  raw.guidedNotes ??= { title: "", sections: [], wordBank: [] };
+  raw.guidedNotes.sections = Array.isArray(raw.guidedNotes.sections) ? raw.guidedNotes.sections : [];
+  for (const s of raw.guidedNotes.sections) s.items = Array.isArray(s.items) ? s.items.filter((it) => typeof it?.text === "string" && typeof it?.answer === "string") : [];
+  raw.quiz = (Array.isArray(raw.quiz) ? raw.quiz : []).filter((q) => Array.isArray(q?.choices) && Number.isInteger(q?.answerIndex));
+  raw.exitTicket = Array.isArray(raw.exitTicket) ? raw.exitTicket : [];
+  const materials = normalize(structuredClone(raw), diagram);
+  assertComplete(PRIVACY.model, raw, materials);
+  return materials;
+}
+
+/** Privacy Mode: the transcript goes only to the open-weight model. One retry on the same model, never Meta's API. */
+export async function generatePrivately(
+  turns: Turn[],
+  ctx: LessonContext,
+  opts: { apiKey: string; diagram?: DiagramContext },
+): Promise<GenerateResult> {
+  const client = new OpenAI({ apiKey: opts.apiKey, baseURL: PRIVACY.baseURL });
+  const input = buildInput(turns, ctx, opts.diagram);
+  const t0 = Date.now();
+  let materials: Materials;
+  try {
+    materials = await callOpenModel(client, input, opts.diagram);
+  } catch (err) {
+    console.warn(`[generate] ${PRIVACY.model} failed, retrying once (Privacy Mode — no Meta fallback):`, err);
+    materials = await callOpenModel(client, input, opts.diagram);
+  }
+  return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
 }
 
 export async function generateMaterials(

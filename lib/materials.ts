@@ -47,7 +47,13 @@ export type ContentGap = {
   suggestion: string;
 };
 
-export type GenerateResult = { materials: Materials; model: string; seconds: number };
+export type GenerateResult = {
+  materials: Materials;
+  model: string;
+  seconds: number;
+  /** True when generated in Privacy Mode on the open-weight model. */
+  privacy?: boolean;
+};
 
 const str = { type: "string" } as const;
 const int = { type: "integer" } as const;

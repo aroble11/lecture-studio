@@ -12,6 +12,18 @@ export const MODELS = {
   segmentation: "sam-3.1",
 } as const;
 
+/** Privacy Mode: materials generation on an open-weight model via partner inference (never falls back to Meta's API).
+ *  Oct 31 test (test-baseten.mjs): chat, json_schema response_format, prompt-only JSON and image input all worked, 3–6 s. */
+export const PRIVACY = {
+  baseURL: "https://inference.baseten.co/v1",
+  /** Baseten's slug (the "-1026" suffix in older notes is wrong). */
+  model: "meta-models/muse-spark-open",
+  label: "Muse Spark Open (open weights, Baseten)",
+  maxOutputTokens: 16_000,
+  /** Oct 31: default effort took 87 s on a 32 s lecture (Wonder at medium: ~22 s). Trying "low". */
+  effort: "low" as "minimal" | "low" | "medium" | "high",
+} as const;
+
 export const META_ASR_URL = "wss://api.meta.ai/v1/asr/realtime";
 
 export const ASR = {

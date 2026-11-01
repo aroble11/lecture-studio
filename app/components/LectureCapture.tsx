@@ -6,7 +6,7 @@ import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
-import { clearSession, loadSession, saveSession } from "@/lib/session-store";
+import { clearSession, loadSession, saveAudio, saveSession } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
 
@@ -52,7 +52,10 @@ export default function LectureCapture() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** False until the saved session has been read, so the empty first render doesn't overwrite it. */
   const [restored, setRestored] = useState(false);
+  /** Audio blob currently in storage, so it's written once per new recording or upload. */
+  const savedBlobRef = useRef<Blob | null>(null);
   const [profile, setProfile] = useState<TeacherProfile | null>(null);
+  const [privacy, setPrivacy] = useState(false);
 
   // Restore the last session after a page refresh.
   useEffect(() => {
@@ -63,13 +66,17 @@ export default function LectureCapture() {
       setProfile(prof);
       if (!saved && prof) setLesson((l) => ({ ...l, subject: prof.subject, grade: prof.grade }));
       if (saved) {
-        if (saved.audio) setAudio({ ...saved.audio, url: URL.createObjectURL(saved.audio.blob) });
+        if (saved.audio) {
+          savedBlobRef.current = saved.audio.blob; // already stored — don't write it again
+          setAudio({ ...saved.audio, url: URL.createObjectURL(saved.audio.blob) });
+        }
         setKeywords(saved.keywords);
         setLesson(saved.lesson);
         setTurns(saved.turns);
         setDurationMs(saved.durationMs);
         setResult(saved.result);
         setResultDiagram(saved.resultDiagram);
+        setPrivacy(saved.privacy ?? false);
         if (saved.refImage) {
           setRefImage(saved.refImage);
           if (saved.diagram) {
@@ -92,12 +99,18 @@ export default function LectureCapture() {
     const t = setTimeout(() => {
       saveSession({
         version: 1,
-        audio: audio ? { blob: audio.blob, label: audio.label } : null,
-        keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram,
+        keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram, privacy,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [restored, audio, keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram]);
+  }, [restored, keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram, privacy]);
+
+  // Save the audio only when it changes.
+  useEffect(() => {
+    if (!restored || (audio?.blob ?? null) === savedBlobRef.current) return;
+    savedBlobRef.current = audio?.blob ?? null;
+    saveAudio(audio ? { blob: audio.blob, label: audio.label } : null);
+  }, [restored, audio]);
 
   function onSaveProfile(p: TeacherProfile) {
     setProfile(p);
@@ -207,7 +220,7 @@ export default function LectureCapture() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turns, context, diagram: diagramContext }),
+        body: JSON.stringify({ turns, context, diagram: diagramContext, ...(privacy ? { privacy: true } : {}) }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.materials) throw new Error(data?.error ?? `Generation failed (HTTP ${res.status})`);
@@ -448,6 +461,22 @@ export default function LectureCapture() {
             Guided notes, a 5-question check for understanding, an exit ticket, and tomorrow&apos;s bell ringer
             {refImage ? ", plus a label-the-diagram activity from your image" : ""}.
           </p>
+          <label className="mt-4 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={privacy}
+              onChange={(e) => setPrivacy(e.target.checked)}
+              disabled={gen.kind === "generating"}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">Privacy Mode</span>{" "}
+              <span className="text-zinc-600 dark:text-zinc-400">
+                — write the materials with Muse Spark Open, Meta&apos;s open-weight model, which a district can run on its own server
+                (here on Baseten). Your transcript and lesson details go only to that model. Transcription and image labeling still use Meta&apos;s API.
+              </span>
+            </span>
+          </label>
           <button
             onClick={generate}
             disabled={gen.kind === "generating" || busy}

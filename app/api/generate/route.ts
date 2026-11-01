@@ -1,9 +1,10 @@
 // POST /api/generate
 // Body (JSON): { turns: [{ startMs, endMs, text }], context?: { subject, grade, objective, standards, vocabulary[] },
-//               diagram?: { summary, items: [{ n, label }] } }
-// Returns: { materials, model, seconds } — see lib/materials.ts.
+//               diagram?: { summary, items: [{ n, label }] }, privacy?: true }
+// privacy: true → Privacy Mode: Muse Spark Open on Baseten only (needs BASETEN_API_KEY), never Meta's hosted models.
+// Returns: { materials, model, seconds, privacy? } — see lib/materials.ts.
 import { GENERATION } from "@/lib/config";
-import { generateMaterials } from "@/lib/generate";
+import { generateMaterials, generatePrivately } from "@/lib/generate";
 import type { DiagramContext } from "@/lib/diagram";
 import type { LessonContext } from "@/lib/materials";
 import type { Turn } from "@/lib/meta-asr";
@@ -22,7 +23,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "Transcript too large" }, { status: 413 });
   }
 
-  let body: { turns?: unknown; context?: Record<string, unknown>; diagram?: { summary?: unknown; items?: unknown } };
+  let body: {
+    turns?: unknown;
+    context?: Record<string, unknown>;
+    diagram?: { summary?: unknown; items?: unknown };
+    privacy?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -57,6 +63,11 @@ export async function POST(request: Request) {
     : undefined;
 
   try {
+    if (body.privacy === true) {
+      const basetenKey = process.env.BASETEN_API_KEY;
+      if (!basetenKey) return Response.json({ error: "Privacy Mode isn't set up on this server" }, { status: 503 });
+      return Response.json(await generatePrivately(turns, context, { apiKey: basetenKey, diagram }));
+    }
     const result = await generateMaterials(turns, context, {
       apiKey,
       baseURL: process.env.META_API_BASE_URL,
