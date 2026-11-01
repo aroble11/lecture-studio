@@ -95,7 +95,25 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
   return m;
 }
 
-async function callModel(client: OpenAI, model: string, input: string): Promise<Materials> {
+/** Throws when cleanup left a tab empty, so the caller falls back instead of showing a blank tab. */
+function assertComplete(model: string, raw: Materials, m: Materials) {
+  const problems: string[] = [];
+  if (m.guidedNotes.sections.length === 0) problems.push("no guided-notes sections");
+  if (m.quiz.length < 3) problems.push(`only ${m.quiz.length} quiz questions`);
+  if (m.exitTicket.length === 0) problems.push("no exit ticket");
+  if (!m.bellRinger?.prompt?.trim()) problems.push("no bell ringer");
+  if (!problems.length) return;
+  const rawShape = {
+    sections: raw.guidedNotes?.sections?.length ?? 0,
+    items: raw.guidedNotes?.sections?.map((s) => s.items?.length ?? 0),
+    emptyAnswers: raw.guidedNotes?.sections?.flatMap((s) => s.items ?? []).filter((it) => !it.answer?.trim()).length,
+    quiz: raw.quiz?.length ?? 0,
+  };
+  console.warn(`[generate] ${model} incomplete: ${problems.join(", ")}; raw shape ${JSON.stringify(rawShape)}`);
+  throw new Error(`${model} returned incomplete materials (${problems.join(", ")})`);
+}
+
+async function callModel(client: OpenAI, model: string, input: string, diagram?: DiagramContext): Promise<Materials> {
   const res = await client.responses.create({
     model,
     reasoning: { effort: GENERATION.effort },
@@ -105,7 +123,10 @@ async function callModel(client: OpenAI, model: string, input: string): Promise<
     text: { format: { type: "json_schema", name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
   });
   if (res.status !== "completed") throw new Error(`${model} returned status ${res.status}`);
-  return JSON.parse(res.output_text) as Materials;
+  const raw = JSON.parse(res.output_text) as Materials;
+  const materials = normalize(structuredClone(raw), diagram);
+  assertComplete(model, raw, materials);
+  return materials;
 }
 
 export async function generateMaterials(
@@ -119,11 +140,11 @@ export async function generateMaterials(
   let model: string = MODELS.generation;
   let materials: Materials;
   try {
-    materials = await callModel(client, model, input);
+    materials = await callModel(client, model, input, opts.diagram);
   } catch (err) {
     console.warn(`[generate] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
     model = MODELS.generationFallback;
-    materials = await callModel(client, model, input);
+    materials = await callModel(client, model, input, opts.diagram);
   }
-  return { materials: normalize(materials, opts.diagram), model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+  return { materials, model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }
