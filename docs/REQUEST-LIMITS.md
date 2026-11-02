@@ -19,8 +19,9 @@ Excess returns 413. Malformed length headers, interrupted reads, invalid UTF-8 J
 JSON syntax return 400. Encoded/compressed bodies return 415; the clients send uncompressed
 JSON or raw PCM. No JSON parsing happens until the actual byte cap has been enforced.
 
-These controls do not yet validate the full JSON shape, transcript timing, or image contents;
-that is hardening item 4. They also do not impose a timeout on a slow uploader.
+The body reader focuses on bytes and JSON syntax. The handlers also validate JSON fields,
+transcript timing, and image contents as documented in `INPUT-VALIDATION.md` (hardening item 4).
+The reader does not impose a timeout on a slow uploader.
 
 Run `npm run test:usage` for stream cancellation, boundary values, misleading/missing headers,
 UTF-8 byte counting, malformed JSON, and all three route integrations. Providers are mocked;

@@ -6,6 +6,7 @@ import { transcribePcm } from "@/lib/meta-asr";
 import { paidProcessingUnavailable } from "@/lib/paid-processing";
 import { withUsageBudget } from "@/lib/usage-budget";
 import { readBoundedBytes } from "@/lib/request-body";
+import { hasMediaType, validateKeywords, inputErrorResponse } from "@/lib/input-validation";
 
 // One ~60 s chunk at 2x takes ~30 s (max 75 s chunk ≈ 40 s); leave headroom for slow handshakes.
 export const maxDuration = 120;
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
   const apiKey = process.env.META_API_KEY;
   if (!apiKey) return Response.json({ error: "Server is missing META_API_KEY" }, { status: 500 });
 
-  if (!request.headers.get("content-type")?.startsWith("application/octet-stream")) {
+  if (!hasMediaType(request, "application/octet-stream")) {
     return Response.json({ error: "Send raw PCM16 audio as application/octet-stream" }, { status: 415 });
   }
   const body = await readBoundedBytes(request, ASR.maxChunkBytes);
@@ -26,14 +27,9 @@ export async function POST(request: Request) {
   if (pcm.length === 0) return Response.json({ error: "Empty audio" }, { status: 400 });
   if (pcm.length % 2 !== 0) return Response.json({ error: "PCM16 length must be even" }, { status: 400 });
 
-  const keywords = [
-    ...new Set(
-      new URL(request.url).searchParams
-        .getAll("kw")
-        .map((k) => k.trim())
-        .filter((k) => k.length > 0 && k.length <= ASR.maxKeywordLength),
-    ),
-  ].slice(0, ASR.maxKeywords);
+  let keywords: string[];
+  try { keywords = validateKeywords(request.url); }
+  catch (error) { return inputErrorResponse(error); }
 
   return withUsageBudget("transcribe", async () => {
     try {

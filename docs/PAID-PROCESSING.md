@@ -35,7 +35,7 @@ Allowances are site-wide, not per visitor. They reset at midnight UTC. Productio
 have separate counters; all deployments within each environment share counters. Local runs
 use development counters. Daily allowance is reserved before provider work and is not refunded
 on failures, since the provider may have billed them. Invalid input is rejected before admission.
-The existing request-validation limitations are tracked separately in hardening items 3–4.
+Request size and field validation are documented in `REQUEST-LIMITS.md` and `INPUT-VALIDATION.md`.
 
 A single atomic Redis script checks quota and active leases, then reserves both. Exhaustion
 returns 429 with `Retry-After`. Missing credentials, store failures, timeouts, or unexpected

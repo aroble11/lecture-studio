@@ -8,14 +8,10 @@ import { generateMaterials, generatePrivately } from "@/lib/generate";
 import { paidProcessingUnavailable } from "@/lib/paid-processing";
 import { withUsageBudget } from "@/lib/usage-budget";
 import { readBoundedJson } from "@/lib/request-body";
-import type { DiagramContext } from "@/lib/diagram";
-import type { LessonContext } from "@/lib/materials";
-import type { Turn } from "@/lib/meta-asr";
+import { hasMediaType, validateGeneration, inputErrorResponse } from "@/lib/input-validation";
 
 // Generation at medium effort can take a minute or more on a long lecture (Hobby allows 300 s).
 export const maxDuration = 300;
-
-const text = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
 
 export async function POST(request: Request) {
   const paused = paidProcessingUnavailable();
@@ -24,48 +20,20 @@ export async function POST(request: Request) {
   const apiKey = process.env.META_API_KEY;
   if (!apiKey) return Response.json({ error: "Server is missing META_API_KEY" }, { status: 500 });
 
-  const parsed = await readBoundedJson<{
-    turns?: unknown;
-    context?: Record<string, unknown>;
-    diagram?: { summary?: unknown; items?: unknown };
-    privacy?: unknown;
-  }>(request, GENERATION.maxBodyBytes);
+  if (!hasMediaType(request, "application/json")) return Response.json({ error: "Send application/json" }, { status: 415 });
+  const parsed = await readBoundedJson<unknown>(request, GENERATION.maxBodyBytes);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value;
+  let input: ReturnType<typeof validateGeneration>;
+  try { input = validateGeneration(parsed.value); }
+  catch (error) { return inputErrorResponse(error); }
+  const { turns, context, diagram, privacy } = input;
 
-  const turns: Turn[] = (Array.isArray(body.turns) ? body.turns : [])
-    .filter((t): t is Turn => typeof t?.text === "string" && t.text.trim() !== "" && Number.isFinite(t.startMs))
-    .map((t) => ({ startMs: t.startMs, endMs: Number.isFinite(t.endMs) ? t.endMs : t.startMs, text: t.text.trim() }));
-  if (turns.length === 0) return Response.json({ error: "Transcript is empty" }, { status: 400 });
-
-  const c = body.context ?? {};
-  const context: LessonContext = {
-    subject: text(c.subject, 100),
-    grade: text(c.grade, 50),
-    objective: text(c.objective),
-    standards: text(c.standards),
-    vocabulary: Array.isArray(c.vocabulary)
-      ? c.vocabulary.map((v) => text(v, 80)).filter((v): v is string => !!v).slice(0, 50)
-      : undefined,
-    style: text(c.style, 600),
-    classNotes: text(c.classNotes, 600),
-  };
-
-  const d = body.diagram;
-  const items = (Array.isArray(d?.items) ? d.items : [])
-    .filter((i): i is { n: number; label: string } => Number.isInteger(i?.n) && typeof i?.label === "string")
-    .slice(0, 12)
-    .map((i) => ({ n: i.n, label: i.label.trim().slice(0, 80) }));
-  const diagram: DiagramContext | undefined = items.length
-    ? { summary: text(d?.summary, 300) ?? "", items }
-    : undefined;
-
-  if (body.privacy === true && !process.env.BASETEN_API_KEY) {
+  if (privacy && !process.env.BASETEN_API_KEY) {
     return Response.json({ error: "Privacy Mode isn't set up on this server" }, { status: 503 });
   }
   return withUsageBudget("generate", async () => {
     try {
-      if (body.privacy === true) {
+      if (privacy) {
         const basetenKey = process.env.BASETEN_API_KEY;
         if (!basetenKey) return Response.json({ error: "Privacy Mode isn't set up on this server" }, { status: 503 });
         return Response.json(await generatePrivately(turns, context, { apiKey: basetenKey, diagram }));
