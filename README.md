@@ -1,36 +1,96 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lecture Studio
 
-## Getting Started
+Lecture Studio records or uploads a lecture and turns it into classroom materials. It can transcribe
+audio, label an optional classroom image, generate teacher-facing materials, and keep the current
+lecture in the browser between refreshes.
 
-First, run the development server:
+## Requirements
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 24 (the version used by CI)
+- npm
+- Meta API credentials for transcription, image labeling, and standard materials generation
+- Baseten credentials only when open-weight materials generation is enabled
+- An Upstash Redis database for shared usage and concurrency limits
+
+## Local setup
+
+1. Install the locked dependencies:
+
+   ```powershell
+   npm ci
+   ```
+
+2. Copy `.env.example` to `.env.local`, then provide the credentials for the services you intend to
+   use. Do not commit `.env.local`.
+
+3. Start the development server:
+
+   ```powershell
+   npm run dev
+   ```
+
+4. Open [http://localhost:3000](http://localhost:3000).
+
+## Environment variables
+
+All variables are server-only. Do not rename them with a `NEXT_PUBLIC_` prefix.
+
+| Name | Required for | Notes |
+| --- | --- | --- |
+| `META_API_KEY` | Transcription, image labeling, and standard generation | Never sent directly to the browser. |
+| `META_API_BASE_URL` | Image labeling and standard generation | Use the Meta-compatible API endpoint supplied for those services. |
+| `BASETEN_API_KEY` | Open-weight materials generation | Not required for standard Meta generation. |
+| `LIMITS_KV_REST_API_URL` | All paid API routes | Upstash REST API URL. |
+| `LIMITS_KV_REST_API_TOKEN` | All paid API routes | Use the write-capable REST token, not the read-only token. |
+| `PAID_PROCESSING_ENABLED` | Optional emergency control | Unset or `true` enables processing; `false` pauses new paid requests. Invalid values fail closed. |
+
+Vercel supplies `VERCEL_ENV`; the app uses it to keep production, preview, and development usage
+counters separate. It should not be added manually for normal deployments.
+
+## Data flow
+
+1. **Browser capture:** microphone audio, uploaded audio, lesson details, and an optional image begin
+   in the teacher's browser.
+2. **Transcription:** the browser converts audio to mono 24 kHz PCM chunks and sends them to
+   `/api/transcribe`; the server sends those chunks to Meta.
+3. **Image labeling:** when requested, `/api/label` sends the image and lesson context to Meta.
+4. **Materials generation:** `/api/generate` sends the transcript and lesson context either to Meta
+   or, when open-weight generation is selected, to Baseten. That selection changes generation only;
+   transcription and image labeling still use Meta.
+5. **Browser persistence:** the current lecture and teacher profile are stored locally in the browser.
+   Audio up to 100 MB may be stored in IndexedDB; other session data uses browser storage. **Start
+   over** deletes the current lecture, while **Delete profile** removes the separate teacher profile.
+6. **Usage controls:** Upstash stores only shared counters and temporary concurrency leases. The app
+   does not put transcripts, images, profiles, or IP addresses in that database.
+
+See [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md), [paid processing controls](docs/PAID-PROCESSING.md),
+and [request limits](docs/REQUEST-LIMITS.md) for the exact boundaries and failure behavior.
+
+## Quality checks
+
+```powershell
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm test` runs the offline suite and does not make paid provider calls. One real Redis integration
+test runs only when the two `LIMITS_KV_REST_API_*` variables are available. The root-level
+`test-*.mjs` files are manual provider probes and are intentionally excluded from `npm test`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Pushes to `main` and pull requests run all four checks in GitHub Actions. See
+[continuous integration](docs/CONTINUOUS-INTEGRATION.md) for details.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deployment
 
-## Learn More
+The project is deployed on Vercel. Configure the environment variables for the intended Vercel
+environments, keep secrets out of source control, and redeploy after changing server variables.
+Production should also retain the Vercel firewall rule for the paid API routes and provider-side
+spending limits; the application's shared allowances are operational safeguards, not financial caps.
 
-To learn more about Next.js, take a look at the following resources:
+## Browser support
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The audio path includes compatibility fallbacks and a 90-minute processing limit, but microphone
+permissions, recording codecs, and long-session memory behavior still require real-browser testing.
+Use the manual matrix in [long-lecture and browser compatibility](docs/BROWSER-COMPATIBILITY.md).
