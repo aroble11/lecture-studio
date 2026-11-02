@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:usage": "node --test tests/paid-processing.test.mjs tests/usage-budget.test.mjs"
+    "test:usage": "node --test tests/paid-processing.test.mjs tests/usage-budget.test.mjs",
+    "test:generation": "node --test tests/generation.test.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",

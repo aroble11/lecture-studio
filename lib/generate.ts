@@ -5,6 +5,7 @@ import { GENERATION, MODELS, PRIVACY } from "./config";
 import type { DiagramContext } from "./diagram";
 import type { Turn } from "./meta-asr";
 import { MATERIALS_SCHEMA, type GenerateResult, type LessonContext, type Materials } from "./materials";
+import { parseGeneratedJson, validateMaterials } from "./materials-validation";
 
 export const BLANK = "_____";
 
@@ -18,7 +19,7 @@ In student-facing materials (guidedNotes, quiz, exitTicket, bellRinger, diagramN
 
 guidedNotes: student fill-in-the-blank notes that follow the lecture in order.
 - 1 to 6 sections, each with a short heading. startSec = the [m:ss] timestamp of the transcript line where that section's topic is first discussed, converted to seconds. Sections must be in time order.
-- 2 to 6 items per section. Each item is one sentence containing exactly one blank written as "${BLANK}"; "answer" is the key term or fact that fills it.
+- 1 to 6 items per section. Each item is one sentence containing exactly one blank written as "${BLANK}"; "answer" is the key term or fact that fills it.
 - Blank only content words a student must learn: key vocabulary, names, dates, causes, effects. Never blank a common word when a key term is available.
 - Every answer must be different.
 - wordBank: when the teacher profile asks for a word bank or similar language support, list every answer exactly as written, in alphabetical order; otherwise [].
@@ -79,11 +80,22 @@ function shuffle<T>(a: T[]) {
   return a;
 }
 
-/** Light cleanup so the UI can trust the shape: blanks present, answers valid, choices shuffled. */
-function normalize(m: Materials, diagram?: DiagramContext): Materials {
+function findWholePhrase(text: string, phrase: string) {
+  const haystack = text.toLocaleLowerCase();
+  const needle = phrase.toLocaleLowerCase();
+  let at = haystack.indexOf(needle);
+  while (at >= 0) {
+    const before = at === 0 ? "" : text[at - 1];
+    const after = at + phrase.length >= text.length ? "" : text[at + phrase.length];
+    if ((!before || !/[\p{L}\p{N}]/u.test(before)) && (!after || !/[\p{L}\p{N}]/u.test(after))) return at;
+    at = haystack.indexOf(needle, at + 1);
+  }
+  return -1;
+}
+
+/** Cleanup only after the untrusted provider response passes validation. */
+function normalize(m: Materials): Materials {
   for (const s of m.guidedNotes.sections) {
-    s.startSec = Math.max(0, Math.round(s.startSec || 0));
-    s.items = s.items.filter((it) => it.text.trim() && it.answer.trim());
     for (const it of s.items) {
       if (it.text.includes(BLANK)) {
         // "the Federalist _____" + answer "Federalist Papers" → "the _____" (the answer already holds those words)
@@ -99,41 +111,24 @@ function normalize(m: Materials, diagram?: DiagramContext): Materials {
         }
         continue;
       }
-      const i = it.text.toLowerCase().indexOf(it.answer.toLowerCase());
-      it.text = i >= 0 ? it.text.slice(0, i) + BLANK + it.text.slice(i + it.answer.length) : `${it.text} ${BLANK}`;
+      const i = findWholePhrase(it.text, it.answer);
+      if (i < 0) throw new Error("Invalid generated materials: guided note answer is absent from its sentence");
+      it.text = it.text.slice(0, i) + BLANK + it.text.slice(i + it.answer.length);
     }
   }
-  m.guidedNotes.sections = m.guidedNotes.sections.filter((s) => s.items.length > 0);
   // Keep the word bank honest: exactly the answers that are still in the notes, no extras.
-  if (m.guidedNotes.wordBank?.length) {
+  if (m.guidedNotes.wordBank.length) {
     const answers = m.guidedNotes.sections.flatMap((s) => s.items.map((it) => it.answer.trim()));
-    m.guidedNotes.wordBank = [...new Set(answers)].sort((a, b) => a.localeCompare(b));
+    m.guidedNotes.wordBank = [...answers].sort((a, b) => a.localeCompare(b));
   } else {
     m.guidedNotes.wordBank = [];
   }
 
-  m.quiz = m.quiz
-    .filter((q) => q.choices.length >= 2 && q.answerIndex >= 0 && q.answerIndex < q.choices.length)
-    .slice(0, 5)
-    .map((q) => {
+  m.quiz = m.quiz.map((q) => {
       const correct = q.choices[q.answerIndex];
       const choices = shuffle([...q.choices]);
       return { ...q, choices, answerIndex: choices.indexOf(correct) };
     });
-  m.exitTicket = m.exitTicket.slice(0, 2);
-  m.pacingFeedback = (m.pacingFeedback ?? []).map((f) => f.trim()).filter(Boolean).slice(0, 3);
-  m.contentGaps = (m.contentGaps ?? [])
-    .filter((g) => g.concept?.trim() && g.issue?.trim())
-    .slice(0, 4)
-    .map((g) => ({ ...g, atSec: Math.max(0, Math.round(g.atSec || 0)) }));
-
-  const valid = new Set(diagram?.items.map((d) => d.n) ?? []);
-  const seen = new Set<number>();
-  m.diagramNotes = (m.diagramNotes ?? []).filter((d) => {
-    if (!valid.has(d.n) || seen.has(d.n) || !d.note?.trim()) return false;
-    seen.add(d.n);
-    return true;
-  });
   return m;
 }
 
@@ -157,25 +152,13 @@ function fixSectionTimes(m: Materials, turns: Turn[]) {
   }
 }
 
-/** Throws when cleanup left a tab empty, so the caller falls back instead of showing a blank tab. */
-function assertComplete(model: string, raw: Materials, m: Materials) {
-  const problems: string[] = [];
-  if (m.guidedNotes.sections.length === 0) problems.push("no guided-notes sections");
-  if (m.quiz.length < 3) problems.push(`only ${m.quiz.length} quiz questions`);
-  if (m.exitTicket.length === 0) problems.push("no exit ticket");
-  if (!m.bellRinger?.prompt?.trim()) problems.push("no bell ringer");
-  if (!problems.length) return;
-  const rawShape = {
-    sections: raw.guidedNotes?.sections?.length ?? 0,
-    items: raw.guidedNotes?.sections?.map((s) => s.items?.length ?? 0),
-    emptyAnswers: raw.guidedNotes?.sections?.flatMap((s) => s.items ?? []).filter((it) => !it.answer?.trim()).length,
-    quiz: raw.quiz?.length ?? 0,
-  };
-  console.warn(`[generate] ${model} incomplete: ${problems.join(", ")}; raw shape ${JSON.stringify(rawShape)}`);
-  throw new Error(`${model} returned incomplete materials (${problems.join(", ")})`);
+function finish(raw: unknown, turns: Turn[], diagram?: DiagramContext): Materials {
+  const materials = normalize(validateMaterials(raw, turns, diagram));
+  fixSectionTimes(materials, turns);
+  return validateMaterials(materials, turns, diagram, true);
 }
 
-async function callModel(client: OpenAI, model: string, input: string, diagram?: DiagramContext): Promise<Materials> {
+async function callModel(client: OpenAI, model: string, input: string, turns: Turn[], diagram?: DiagramContext): Promise<Materials> {
   const res = await client.responses.create({
     model,
     reasoning: { effort: GENERATION.effort },
@@ -185,15 +168,11 @@ async function callModel(client: OpenAI, model: string, input: string, diagram?:
     text: { format: { type: "json_schema", name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
   });
   if (res.status !== "completed") throw new Error(`${model} returned status ${res.status}`);
-  const raw = JSON.parse(res.output_text) as Materials;
-  const materials = normalize(structuredClone(raw), diagram);
-  assertComplete(model, raw, materials);
-  return materials;
+  return finish(parseGeneratedJson(res.output_text), turns, diagram);
 }
 
-/** Privacy Mode call: Chat Completions on Baseten. Docs say Spark Open lacks structured outputs, but json_schema
- *  worked in testing — parse defensively anyway (strip prose/code fences around the object). */
-async function callOpenModel(client: OpenAI, input: string, diagram?: DiagramContext): Promise<Materials> {
+/** Privacy Mode call: Chat Completions on Baseten. Accept only a complete JSON object or one complete JSON fence. */
+async function callOpenModel(client: OpenAI, input: string, turns: Turn[], diagram?: DiagramContext): Promise<Materials> {
   const res = await client.chat.completions.create({
     model: PRIVACY.model,
     max_tokens: PRIVACY.maxOutputTokens,
@@ -208,25 +187,11 @@ async function callOpenModel(client: OpenAI, input: string, diagram?: DiagramCon
     response_format: { type: "json_schema", json_schema: { name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
   });
   const choice = res.choices[0];
-  if (choice?.finish_reason === "length") throw new Error(`${PRIVACY.model} ran out of output tokens`);
-  const text = choice?.message.content ?? "";
-  const start = text.indexOf("{"), end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error(`${PRIVACY.model} returned no JSON`);
-  const raw = JSON.parse(text.slice(start, end + 1)) as Materials;
-  // Schema isn't guaranteed here — make the shape safe for normalize() before trusting it.
-  raw.guidedNotes ??= { title: "", sections: [], wordBank: [] };
-  raw.guidedNotes.sections = Array.isArray(raw.guidedNotes.sections) ? raw.guidedNotes.sections : [];
-  for (const s of raw.guidedNotes.sections) s.items = Array.isArray(s.items) ? s.items.filter((it) => typeof it?.text === "string" && typeof it?.answer === "string") : [];
-  raw.quiz = (Array.isArray(raw.quiz) ? raw.quiz : []).filter((q) => Array.isArray(q?.choices) && Number.isInteger(q?.answerIndex));
-  raw.exitTicket = Array.isArray(raw.exitTicket) ? raw.exitTicket : [];
-  const materials = normalize(structuredClone(raw), diagram);
-  assertComplete(PRIVACY.model, raw, materials);
-  return materials;
-}
-
-function finish(m: Materials, turns: Turn[]): Materials {
-  fixSectionTimes(m, turns);
-  return m;
+  if (!choice || choice.finish_reason !== "stop") {
+    throw new Error(`${PRIVACY.model} returned finish reason ${choice?.finish_reason ?? "missing"}`);
+  }
+  if (choice.message.refusal) throw new Error(`${PRIVACY.model} refused the request`);
+  return finish(parseGeneratedJson(choice.message.content), turns, diagram);
 }
 
 /** Privacy Mode: the transcript goes only to the open-weight model. One retry on the same model, never Meta's API. */
@@ -240,12 +205,12 @@ export async function generatePrivately(
   const t0 = Date.now();
   let materials: Materials;
   try {
-    materials = await callOpenModel(client, input, opts.diagram);
+    materials = await callOpenModel(client, input, turns, opts.diagram);
   } catch (err) {
     console.warn(`[generate] ${PRIVACY.model} failed, retrying once (Privacy Mode — no Meta fallback):`, err);
-    materials = await callOpenModel(client, input, opts.diagram);
+    materials = await callOpenModel(client, input, turns, opts.diagram);
   }
-  return { materials: finish(materials, turns), model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
+  return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
 }
 
 export async function generateMaterials(
@@ -259,11 +224,11 @@ export async function generateMaterials(
   let model: string = MODELS.generation;
   let materials: Materials;
   try {
-    materials = await callModel(client, model, input, opts.diagram);
+    materials = await callModel(client, model, input, turns, opts.diagram);
   } catch (err) {
     console.warn(`[generate] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
     model = MODELS.generationFallback;
-    materials = await callModel(client, model, input, opts.diagram);
+    materials = await callModel(client, model, input, turns, opts.diagram);
   }
-  return { materials: finish(materials, turns), model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+  return { materials, model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }
