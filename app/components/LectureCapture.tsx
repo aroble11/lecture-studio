@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
+import { decodeToMono, formatTime, readAudioDurationMs, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
 import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
 import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
-import { RECORDING_LIMITS, recordingLimitMessage, recordingLimitReason, stopMediaRecorder, stopMediaStream, type RecordingLimitReason } from "@/lib/recording-lifecycle";
+import { createCompatibleMediaRecorder, RECORDING_LIMITS, recordingLimitMessage, recordingLimitReason, stopMediaRecorder, stopMediaStream, type RecordingLimitReason } from "@/lib/recording-lifecycle";
 import { clearSession, loadSession, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
@@ -402,7 +402,7 @@ export default function LectureCapture() {
     streamRef.current = stream;
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, { audioBitsPerSecond: RECORDING_LIMITS.audioBitsPerSecond });
+      recorder = createCompatibleMediaRecorder(stream);
     } catch {
       stopMediaStream(stream);
       streamRef.current = null;
@@ -481,6 +481,11 @@ export default function LectureCapture() {
     const started = Date.now();
     try {
       setStatus({ kind: "decoding" });
+      const metadataDurationMs = await readAudioDurationMs(sourceAudio.blob);
+      if (!lectureOps.current.isCurrent(ticket)) return;
+      if (metadataDurationMs !== null && metadataDurationMs > MAX_MINUTES * 60_000) {
+        throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(metadataDurationMs)}.`);
+      }
       const samples = await decodeToMono(sourceAudio.blob);
       if (!lectureOps.current.isCurrent(ticket)) return;
       const ms = (samples.length / SAMPLE_RATE) * 1000;

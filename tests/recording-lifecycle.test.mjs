@@ -15,8 +15,9 @@ function loadLifecycle() {
 
 test("recordings stop at the exact duration and byte boundaries", () => {
   const recording = loadLifecycle();
-  assert.equal(recording.recordingLimitReason(recording.RECORDING_LIMITS.durationMs - 1, 0), null);
-  assert.equal(recording.recordingLimitReason(recording.RECORDING_LIMITS.durationMs, 0), "duration");
+  const stopAt = recording.RECORDING_LIMITS.durationMs - recording.RECORDING_LIMITS.stopLeadMs;
+  assert.equal(recording.recordingLimitReason(stopAt - 1, 0), null);
+  assert.equal(recording.recordingLimitReason(stopAt, 0), "duration");
   assert.equal(recording.recordingLimitReason(0, recording.RECORDING_LIMITS.bytes - 1), null);
   assert.equal(recording.recordingLimitReason(0, recording.RECORDING_LIMITS.bytes), "size");
 });
@@ -31,6 +32,19 @@ test("cleanup stops every media track and only an active recorder", () => {
   recording.stopMediaRecorder({ state: "recording", stop: () => recorderStops++ });
   recording.stopMediaRecorder({ state: "inactive", stop: () => recorderStops++ });
   assert.equal(recorderStops, 1);
+});
+
+test("recording falls back when a browser rejects the bitrate option", () => {
+  const recording = loadLifecycle();
+  const calls = [];
+  const recorder = recording.createCompatibleMediaRecorder({}, (options) => {
+    calls.push(options);
+    if (options) throw new Error("unsupported option");
+    return { state: "inactive" };
+  });
+  assert.equal(recorder.state, "inactive");
+  assert.equal(calls[0].audioBitsPerSecond, 128_000);
+  assert.equal(calls[1], undefined);
 });
 
 test("capture UI exposes permission state and unmount cleanup", () => {

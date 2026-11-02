@@ -17,25 +17,65 @@ const PAUSE_FRAMES = 5;
 export type Turn = { startMs: number; endMs: number; text: string };
 export type Chunk = { start: number; end: number }; // sample indexes
 
+/** Mix channels and resample explicitly. Some browsers may use their device rate even when a
+ * AudioContext rate is requested; the ASR contract always requires exactly 24 kHz mono. */
+export function toMonoAtRate(channels: Float32Array[], sourceRate: number, targetRate = SAMPLE_RATE): Float32Array {
+  if (!channels.length || !channels[0].length || !Number.isFinite(sourceRate) || sourceRate <= 0 ||
+      !Number.isFinite(targetRate) || targetRate <= 0) return new Float32Array();
+  if (channels.length === 1 && sourceRate === targetRate) return channels[0];
+  const sourceLength = Math.min(...channels.map((channel) => channel.length));
+  const outputLength = Math.max(1, Math.round(sourceLength * targetRate / sourceRate));
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const position = Math.min(sourceLength - 1, i * sourceRate / targetRate);
+    const before = Math.floor(position);
+    const after = Math.min(sourceLength - 1, before + 1);
+    const fraction = position - before;
+    let mixed = 0;
+    for (const channel of channels) mixed += channel[before] + (channel[after] - channel[before]) * fraction;
+    output[i] = mixed / channels.length;
+  }
+  return output;
+}
+
 /** Decode a recording or upload to mono Float32 samples at 24 kHz. */
 export async function decodeToMono(blob: Blob): Promise<Float32Array> {
   const bytes = await blob.arrayBuffer();
-  // decodeAudioData resamples to the context's rate, so ask for 24 kHz directly.
-  const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  // Ask for 24 kHz, but fall back to the device default and explicitly resample below.
+  let ctx: AudioContext;
+  try { ctx = new AudioContext({ sampleRate: SAMPLE_RATE }); }
+  catch { ctx = new AudioContext(); }
   try {
     const audio = await ctx.decodeAudioData(bytes);
-    if (audio.numberOfChannels === 1) return audio.getChannelData(0);
-    const out = new Float32Array(audio.length);
-    for (let c = 0; c < audio.numberOfChannels; c++) {
-      const data = audio.getChannelData(c);
-      for (let i = 0; i < data.length; i++) out[i] += data[i];
-    }
-    const n = audio.numberOfChannels;
-    for (let i = 0; i < out.length; i++) out[i] /= n;
-    return out;
+    return toMonoAtRate(Array.from({ length: audio.numberOfChannels }, (_, channel) => audio.getChannelData(channel)), audio.sampleRate);
   } finally {
     void ctx.close();
   }
+}
+
+/** Read duration from container metadata without decoding the full lecture. Null means the browser
+ * could not read metadata, so callers may still try Web Audio decoding. */
+export function readAudioDurationMs(blob: Blob, timeoutMs = 5_000): Promise<number | null> {
+  return new Promise((resolve) => {
+    const audio = document.createElement("audio");
+    const url = URL.createObjectURL(blob);
+    let finished = false;
+    const finish = (value: number | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      audio.removeAttribute("src");
+      audio.load();
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => finish(Number.isFinite(audio.duration) ? audio.duration * 1000 : null);
+    audio.onerror = () => finish(null);
+    audio.src = url;
+    audio.load();
+  });
 }
 
 function frameEnergy(samples: Float32Array, start: number, len: number): number {
@@ -48,8 +88,7 @@ function frameEnergy(samples: Float32Array, start: number, len: number): number 
 /** Split into chunks of 45–75 s. Each cut goes in the middle of the quietest half-second
  *  near the 60 s mark, so it lands in a real pause between sentences — not a short gap
  *  between words or digits (a 100 ms window split "8.8.8.8" in an Oct 31 test). */
-export function planChunks(samples: Float32Array): Chunk[] {
-  const rate = SAMPLE_RATE;
+export function planChunks(samples: Float32Array, rate = SAMPLE_RATE): Chunk[] {
   const frame = Math.round(FRAME_S * rate);
   const chunks: Chunk[] = [];
   let start = 0;
