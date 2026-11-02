@@ -38,6 +38,7 @@ type SaveState =
   | { kind: "too-large"; maxBytes: number };
 
 const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
+const uploadLabelClass = "cursor-pointer rounded-lg border border-zinc-300 font-medium hover:bg-zinc-100 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-blue-600 dark:border-zinc-700 dark:hover:bg-zinc-900";
 const newAudioRevision = () => typeof globalThis.crypto.randomUUID === "function"
   ? globalThis.crypto.randomUUID()
   : `${Date.now()}-${globalThis.crypto.getRandomValues(new Uint32Array(2)).join("-")}`;
@@ -572,9 +573,19 @@ export default function LectureCapture() {
               {requestingMicrophone ? "Waiting for microphone…" : "● Record"}
             </button>
           )}
-          <label className={`cursor-pointer rounded-lg border border-zinc-300 px-4 py-2 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}>
+          <input
+            id="lecture-audio-upload"
+            type="file"
+            accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg"
+            onChange={onFile}
+            disabled={controlsLocked}
+            className="peer sr-only"
+          />
+          <label
+            htmlFor="lecture-audio-upload"
+            className={`${uploadLabelClass} px-4 py-2 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}
+          >
             Upload audio
-            <input type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg" onChange={onFile} disabled={controlsLocked} className="hidden" />
           </label>
         </div>
         {requestingMicrophone && <p role="status" className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Waiting for microphone permission…</p>}
@@ -623,11 +634,22 @@ export default function LectureCapture() {
           </label>
           <div className="text-sm sm:col-span-2">
             <span className="font-medium">Reference image</span>{" "}
-            <span className="text-zinc-500">(a slide, worksheet, diagram, or photo — we&apos;ll find objects to label)</span>
+            <span id="reference-image-help" className="text-zinc-500">(a slide, worksheet, diagram, or photo — we&apos;ll find objects to label)</span>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <label className={`cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}>
+              <input
+                id="reference-image-upload"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={onImage}
+                disabled={controlsLocked}
+                aria-describedby="reference-image-help"
+                className="peer sr-only"
+              />
+              <label
+                htmlFor="reference-image-upload"
+                className={`${uploadLabelClass} px-3 py-1.5 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}
+              >
                 {refImage ? "Replace image" : "Add image"}
-                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onImage} disabled={controlsLocked} className="hidden" />
               </label>
               {refImage && (
                 <button onClick={removeImage} disabled={controlsLocked} className="text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
