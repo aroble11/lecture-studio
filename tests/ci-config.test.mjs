@@ -14,8 +14,13 @@ test("type-checking generates Next.js route helpers in a clean checkout", () => 
   assert.equal(packageJson.scripts.typecheck, "next typegen && tsc --noEmit");
 });
 
+test("production dependency advisories fail locally and in CI", () => {
+  assert.equal(packageJson.scripts["audit:prod"], "npm audit --omit=dev --audit-level=moderate");
+  assert.match(workflow, /npm\s+run\s+audit:prod/);
+});
+
 test("CI runs every local quality gate and needs no provider secrets", () => {
-  for (const command of ["npm ci", "npm run lint", "npm run typecheck", "npm test", "npm run build"]) {
+  for (const command of ["npm ci", "npm run audit:prod", "npm run lint", "npm run typecheck", "npm test", "npm run build"]) {
     assert.match(workflow, new RegExp(command.replaceAll(" ", "\\s+")));
   }
   assert.doesNotMatch(workflow, /secrets\.|META_API_KEY|BASETEN_API_KEY|LIMITS_KV_/);
