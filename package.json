@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "audit:prod": "npm audit --omit=dev --audit-level=moderate",
+    "smoke:live": "node test-live-smoke.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test \"tests/*.test.mjs\"",
     "test:usage": "node --test tests/paid-processing.test.mjs tests/usage-budget.test.mjs",
