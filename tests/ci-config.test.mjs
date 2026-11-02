@@ -10,6 +10,10 @@ test("the unified offline test command cannot discover paid root scripts", () =>
   assert.doesNotMatch(packageJson.scripts.test, /test-(?:api|baseten|generate|label|route|sam|transcribe)\.mjs/);
 });
 
+test("type-checking generates Next.js route helpers in a clean checkout", () => {
+  assert.equal(packageJson.scripts.typecheck, "next typegen && tsc --noEmit");
+});
+
 test("CI runs every local quality gate and needs no provider secrets", () => {
   for (const command of ["npm ci", "npm run lint", "npm run typecheck", "npm test", "npm run build"]) {
     assert.match(workflow, new RegExp(command.replaceAll(" ", "\\s+")));
