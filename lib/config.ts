@@ -12,7 +12,7 @@ export const MODELS = {
   segmentation: "sam-3.1",
 } as const;
 
-/** Privacy Mode: materials generation on an open-weight model via partner inference (never falls back to Meta's API).
+/** Open-weight materials generation via partner inference (never falls back to Meta's API).
  *  Oct 31 test (test-baseten.mjs): chat, json_schema response_format, prompt-only JSON and image input all worked, 3–6 s. */
 export const PRIVACY = {
   baseURL: "https://inference.baseten.co/v1",

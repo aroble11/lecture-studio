@@ -28,7 +28,7 @@ export type SavedSession = {
   /** Exact transcript and lesson inputs used to produce result. Older saves may lack it. */
   resultSource?: ResultSource | null;
   resultDiagram: { image: string; result: DiagramResult } | null;
-  /** Privacy Mode toggle (added Oct 31; older saves lack it). */
+  /** Open-weight generation toggle (legacy property name retained for compatibility). */
   privacy?: boolean;
 };
 

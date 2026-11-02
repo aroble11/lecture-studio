@@ -192,7 +192,7 @@ test("an aborted standard generation does not spend its fallback attempt", async
   assert.equal(calls.responses.length, 1);
 });
 
-test("Privacy Mode retries the same provider after invalid output and accepts a complete JSON fence", async () => {
+test("open-weight generation retries the same provider after invalid output and accepts a complete JSON fence", async () => {
   const { load, calls } = loader({ chats: [chat({}), chat(`\`\`\`json\n${json(materials())}\n\`\`\``)] });
   const result = await load("lib/generate.ts").generatePrivately(turns, {}, { apiKey: "test" });
   assert.equal(calls.chats.length, 2);
@@ -202,7 +202,7 @@ test("Privacy Mode retries the same provider after invalid output and accepts a 
   assert.equal(result.privacy, true);
 });
 
-test("Privacy Mode rejects truncated, filtered, refused, or absent choices", async () => {
+test("open-weight generation rejects truncated, filtered, refused, or absent choices", async () => {
   for (const bad of [
     { choices: [] },
     chat(materials(), "length"),

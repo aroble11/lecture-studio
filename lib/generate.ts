@@ -171,7 +171,7 @@ async function callModel(client: OpenAI, model: string, input: string, turns: Tu
   return finish(parseGeneratedJson(res.output_text), turns, diagram);
 }
 
-/** Privacy Mode call: Chat Completions on Baseten. Accept only a complete JSON object or one complete JSON fence. */
+/** Open-weight generation call: Chat Completions on Baseten. Accept only a complete JSON object or one complete JSON fence. */
 async function callOpenModel(client: OpenAI, input: string, turns: Turn[], signal?: AbortSignal, diagram?: DiagramContext): Promise<Materials> {
   const res = await client.chat.completions.create({
     model: PRIVACY.model,
@@ -194,7 +194,7 @@ async function callOpenModel(client: OpenAI, input: string, turns: Turn[], signa
   return finish(parseGeneratedJson(choice.message.content), turns, diagram);
 }
 
-/** Privacy Mode: the transcript goes only to the open-weight model. One retry on the same model, never Meta's API. */
+/** Open-weight generation: one retry on the same model, never Meta's generation API. */
 export async function generatePrivately(
   turns: Turn[],
   ctx: LessonContext,
@@ -213,7 +213,7 @@ export async function generatePrivately(
     materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-    console.warn(`[generate] ${PRIVACY.model} failed, retrying once (Privacy Mode — no Meta fallback):`, err);
+    console.warn(`[generate] ${PRIVACY.model} failed, retrying once (open-weight generation — no Meta fallback):`, err);
     materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
   }
   return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };

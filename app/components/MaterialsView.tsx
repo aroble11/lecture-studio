@@ -43,7 +43,7 @@ export default function MaterialsView({
         <span className="text-sm text-zinc-500">
           {result.privacy && (
             <span className="mr-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-              Privacy Mode
+              Open-weight generation
             </span>
           )}
           {result.model} · {result.seconds.toFixed(0)} s

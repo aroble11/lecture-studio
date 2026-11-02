@@ -4,7 +4,7 @@ Hardening item 6 prevents asynchronous work for an older lecture revision from c
 current lecture.
 
 - Transcription and generation receive revision tickets. Selecting or recording new audio,
-  changing lesson inputs, changing the profile or privacy option, replacing/removing an image,
+  changing lesson inputs, changing the profile or open-weight option, replacing/removing an image,
   or starting over invalidates the revision and aborts active network requests.
 - Progress, errors, transcripts, and generated materials are applied only while their ticket is
   still current. A late response can finish, but it cannot change the UI or saved session.

@@ -2,7 +2,7 @@
 
 Hardening item 5 treats both generation providers' output as untrusted. A provider response is
 validated before cleanup and validated again after blank repair, answer shuffling, and timestamp
-correction. Invalid primary output triggers the existing fallback model; invalid Privacy Mode
+correction. Invalid primary output triggers the existing fallback model; invalid open-weight
 output triggers its one same-provider retry. If the final attempt is invalid, generation fails
 instead of displaying or saving partial materials.
 
@@ -24,7 +24,7 @@ Validation requires:
   complete bell ringer;
 - exactly one diagram note for every expected numbered item, with no missing, duplicate, or
   unexpected numbers; without a diagram, diagram notes must be empty; and
-- a completed standard-provider response, or a Privacy Mode response that ended normally and
+- a completed standard-provider response, or an open-weight response that ended normally and
   was not refused, truncated, filtered, or missing.
 
 These checks guarantee shape and internal consistency, not factual accuracy, pedagogical quality,

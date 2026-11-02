@@ -3,7 +3,7 @@
 ## Emergency pause
 
 `PAID_PROCESSING_ENABLED=false` stops new requests to `/api/transcribe`, `/api/generate`
-(including Baseten Privacy Mode), and `/api/label` before reading their bodies or calling providers.
+(including Baseten open-weight generation), and `/api/label` before reading their bodies or calling providers.
 The response is HTTP 503 with a message the current UI can display. Saved materials and the
 page remain accessible. A future cached sample must not call these routes.
 

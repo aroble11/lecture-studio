@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
 import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
@@ -478,6 +479,12 @@ export default function LectureCapture() {
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           Record yourself teaching, or upload an audio file. Teacher voice only — never record students.
         </p>
+        <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:bg-blue-950 dark:text-blue-100">
+          <span className="font-medium">Where data goes:</span> Audio chunks and key vocabulary go to Meta for transcription.
+          An optional reference image plus subject, grade, objective, and vocabulary go to Meta for labeling.
+          Materials use Meta by default; the open-weight option sends that generation step to Baseten instead.{" "}
+          <Link href="/privacy" className="font-medium underline">Privacy and data flow</Link>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {recording ? (
@@ -629,10 +636,10 @@ export default function LectureCapture() {
               className="mt-1"
             />
             <span>
-              <span className="font-medium">Privacy Mode</span>{" "}
+              <span className="font-medium">Use open-weight model for materials</span>{" "}
               <span className="text-zinc-600 dark:text-zinc-400">
-                — write the materials with Muse Spark Open, Meta&apos;s open-weight model, which a district can run on its own server
-                (here on Baseten). Your transcript and lesson details go only to that model. Transcription and image labeling still use Meta&apos;s API.
+                — sends the transcript, lesson details, and any diagram-label terms to Muse Spark Open on Baseten instead of Meta
+                for materials generation only. Audio transcription and optional image labeling still use Meta&apos;s API.
               </span>
             </span>
           </label>

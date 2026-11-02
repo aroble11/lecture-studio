@@ -1,4 +1,5 @@
 import LectureCapture from "./components/LectureCapture";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -9,6 +10,9 @@ export default function Home() {
           <p className="mt-2 text-zinc-600 dark:text-zinc-400">
             Record a lecture, get classroom-ready materials.
           </p>
+          <Link href="/privacy" className="mt-2 inline-block text-sm font-medium text-blue-700 underline dark:text-blue-400">
+            Privacy and data flow
+          </Link>
         </header>
         <LectureCapture />
       </main>

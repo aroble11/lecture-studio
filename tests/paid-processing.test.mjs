@@ -86,6 +86,54 @@ test("the switch also blocks Baseten generation", async () => {
   assert.equal(calls, 0);
 });
 
+test("open-weight generation works with a Baseten key and no Meta key", async () => {
+  let privateCalls = 0;
+  let standardCalls = 0;
+  const POST = load("app/api/generate/route.ts", { BASETEN_API_KEY: "baseten-only" }, {
+    "@/lib/generate": {
+      generatePrivately: async (_turns, _context, opts) => {
+        privateCalls++;
+        assert.equal(opts.apiKey, "baseten-only");
+        return { ok: true };
+      },
+      generateMaterials: async () => { standardCalls++; return { ok: true }; },
+    },
+  }).POST;
+  const response = await POST(new Request("http://localhost/api/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ privacy: true, turns: [{ startMs: 0, endMs: 1000, text: "Lecture" }] }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(privateCalls, 1);
+  assert.equal(standardCalls, 0);
+});
+
+test("each generation mode checks only its selected provider credential", async () => {
+  let calls = 0;
+  const providers = {
+    "@/lib/generate": {
+      generatePrivately: async () => { calls++; },
+      generateMaterials: async () => { calls++; },
+    },
+  };
+  const body = (privacy) => JSON.stringify({ privacy, turns: [{ startMs: 0, endMs: 1000, text: "Lecture" }] });
+  const standard = load("app/api/generate/route.ts", { BASETEN_API_KEY: "test-only" }, providers).POST;
+  const standardResponse = await standard(new Request("http://localhost/api/generate", {
+    method: "POST", headers: { "content-type": "application/json" }, body: body(false),
+  }));
+  assert.equal(standardResponse.status, 500);
+  assert.match((await standardResponse.json()).error, /META_API_KEY/);
+
+  const openWeight = load("app/api/generate/route.ts", { META_API_KEY: "test-only" }, providers).POST;
+  const openWeightResponse = await openWeight(new Request("http://localhost/api/generate", {
+    method: "POST", headers: { "content-type": "application/json" }, body: body(true),
+  }));
+  assert.equal(openWeightResponse.status, 503);
+  assert.match((await openWeightResponse.json()).error, /Open-weight generation/);
+  assert.equal(calls, 0);
+});
+
 for (const [route, headers, body] of cases) {
   test(`${route}: budget denial prevents provider work`, async () => {
     let checked = false;

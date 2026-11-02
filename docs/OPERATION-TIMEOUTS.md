@@ -5,7 +5,7 @@ explicit budgets that fit the server routes.
 
 - All OpenAI-compatible clients set `maxRetries: 0`; retry and fallback behavior is owned by the
   application and is therefore predictable.
-- Standard and Privacy Mode generation calls each have 135 seconds. Two sequential attempts use
+- Standard and open-weight generation calls each have 135 seconds. Two sequential attempts use
   at most 270 seconds, reserving roughly 30 seconds inside the generation route's 300-second limit.
 - Image-label planning calls each have 18 seconds. A primary attempt, one fallback, and the
   parallel SAM phase (15 seconds) fit inside the labeling route's 60-second limit.

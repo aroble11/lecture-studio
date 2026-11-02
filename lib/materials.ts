@@ -51,7 +51,7 @@ export type GenerateResult = {
   materials: Materials;
   model: string;
   seconds: number;
-  /** True when generated in Privacy Mode on the open-weight model. */
+  /** True when materials were generated with the open-weight model on Baseten. */
   privacy?: boolean;
 };
 
