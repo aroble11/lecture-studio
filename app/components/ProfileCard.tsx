@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { EMPTY_PROFILE, isEmptyProfile, saveProfile, type TeacherProfile } from "@/lib/profile-store";
+import { clearProfile, EMPTY_PROFILE, isEmptyProfile, saveProfile, type TeacherProfile } from "@/lib/profile-store";
 
 const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
 
@@ -9,9 +9,11 @@ const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent
 export default function ProfileCard({
   profile,
   onSave,
+  onClear,
 }: {
   profile: TeacherProfile | null;
   onSave: (p: TeacherProfile) => void;
+  onClear: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<TeacherProfile>(profile ?? EMPTY_PROFILE);
@@ -31,6 +33,17 @@ export default function ProfileCard({
     setEditing(false);
   }
 
+  function clear() {
+    if (!window.confirm("Delete your saved teaching profile from this browser? Your current lecture will not be deleted.")) return;
+    if (!clearProfile()) {
+      setSaveFailed(true);
+      return;
+    }
+    setSaveFailed(false);
+    setDraft(EMPTY_PROFILE);
+    onClear();
+  }
+
   if (!editing) {
     const summary = [profile?.subject, profile?.grade && `Grade ${profile.grade}`].filter(Boolean).join(" · ");
     return (
@@ -43,13 +56,20 @@ export default function ProfileCard({
               <span className="font-medium text-zinc-900 dark:text-zinc-100">Your profile</span>
               {summary && ` · ${summary}`}
               {profile?.style && " · style saved"}
-              {saveFailed && <span className="text-red-600"> · couldn&apos;t save in this browser (used for this visit only)</span>}
             </>
           )}
         </span>
-        <button onClick={open} className="font-medium text-blue-700 underline hover:text-blue-900 dark:text-blue-400">
-          {empty ? "Set up profile" : "Edit"}
-        </button>
+        <div className="flex gap-3">
+          <button onClick={open} className="font-medium text-blue-700 underline hover:text-blue-900 dark:text-blue-400">
+            {empty ? "Set up profile" : "Edit"}
+          </button>
+          {!empty && (
+            <button onClick={clear} className="font-medium text-zinc-500 underline hover:text-red-700">
+              Delete profile
+            </button>
+          )}
+        </div>
+        {saveFailed && <span className="w-full text-red-600">This browser could not update the saved profile.</span>}
       </div>
     );
   }

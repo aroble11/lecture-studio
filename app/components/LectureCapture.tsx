@@ -7,14 +7,14 @@ import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
 import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
-import { clearSession, loadSession, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
+import { clearSession, loadSession, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
 
 const MAX_FILE_MB = 300;
 const MAX_MINUTES = 90;
 
-type Audio = { blob: Blob; url: string; label: string };
+type Audio = { blob: Blob; url: string; label: string; revision: string };
 type Status =
   | { kind: "idle" }
   | { kind: "recording"; startedAt: number }
@@ -28,8 +28,16 @@ type GenStatus =
   | { kind: "idle" }
   | { kind: "generating"; startedAt: number }
   | { kind: "error"; message: string };
+type SaveState =
+  | { kind: "idle" | "saving" | "saved" }
+  | { kind: "error"; message: string }
+  | { kind: "warning"; message: string }
+  | { kind: "too-large"; maxBytes: number };
 
 const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
+const newAudioRevision = () => typeof globalThis.crypto.randomUUID === "function"
+  ? globalThis.crypto.randomUUID()
+  : `${Date.now()}-${globalThis.crypto.getRandomValues(new Uint32Array(2)).join("-")}`;
 
 export default function LectureCapture() {
   const [audio, setAudio] = useState<Audio | null>(null);
@@ -60,24 +68,42 @@ export default function LectureCapture() {
   const savedBlobRef = useRef<Blob | null>(null);
   const [profile, setProfile] = useState<TeacherProfile | null>(null);
   const [privacy, setPrivacy] = useState(false);
+  const [sessionSave, setSessionSave] = useState<SaveState>({ kind: "idle" });
+  const [audioSave, setAudioSave] = useState<SaveState>({ kind: "idle" });
+  const [saveRetry, setSaveRetry] = useState(0);
+  const [persistenceEnabled, setPersistenceEnabled] = useState(false);
+  const sessionSaveAttempt = useRef(0);
+  const audioSaveAttempt = useRef(0);
 
   // Restore the last session after a page refresh.
   useEffect(() => {
     let cancelled = false;
     const restoreRevision = lectureOps.current.revision();
-    loadSession().then((saved) => {
+    loadSession().then((loaded) => {
       if (cancelled) return;
       const prof = loadProfile();
       setProfile(prof);
       if (lectureOps.current.revision() !== restoreRevision) {
+        setPersistenceEnabled(true);
         setRestored(true);
         return;
       }
+      if (!loaded.ok) {
+        setSessionSave({ kind: "error", message: "This browser could not read saved lecture data." });
+        setRestored(true);
+        return;
+      }
+      const saved = loaded.value;
+      setPersistenceEnabled(true);
+      setSessionSave({ kind: "saved" });
+      if (loaded.warning) setAudioSave({ kind: "warning", message: loaded.warning });
       if (!saved && prof) setLesson((l) => ({ ...l, subject: prof.subject, grade: prof.grade }));
       if (saved) {
         if (saved.audio) {
-          savedBlobRef.current = saved.audio.blob; // already stored — don't write it again
-          setAudio({ ...saved.audio, url: URL.createObjectURL(saved.audio.blob) });
+          const revision = saved.audio.revision ?? newAudioRevision();
+          if (saved.audio.revision) savedBlobRef.current = saved.audio.blob; // already stored — don't write it again
+          setAudio({ ...saved.audio, revision, url: URL.createObjectURL(saved.audio.blob) });
+          if (saved.audio.revision) setAudioSave({ kind: "saved" });
         }
         setKeywords(saved.keywords);
         setLesson(saved.lesson);
@@ -114,15 +140,20 @@ export default function LectureCapture() {
 
   // Save after each change (debounced).
   useEffect(() => {
-    if (!restored) return;
-    const t = setTimeout(() => {
-      saveSession({
+    if (!restored || !persistenceEnabled) return;
+    const attempt = ++sessionSaveAttempt.current;
+    const statusTimer = setTimeout(() => setSessionSave({ kind: "saving" }), 0);
+    const t = setTimeout(async () => {
+      const saveResult = await saveSession({
         version: 1,
+        audioRevision: audio && audio.blob.size <= MAX_SAVED_AUDIO_BYTES ? audio.revision : null,
         keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy,
       });
+      if (attempt !== sessionSaveAttempt.current) return;
+      setSessionSave(saveResult.ok ? { kind: "saved" } : { kind: "error", message: "Changes could not be saved in this browser." });
     }, 500);
-    return () => clearTimeout(t);
-  }, [restored, keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy]);
+    return () => { clearTimeout(statusTimer); clearTimeout(t); };
+  }, [restored, persistenceEnabled, audio, keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy, saveRetry]);
 
   useEffect(() => () => {
     lectureOps.current.invalidate();
@@ -131,16 +162,34 @@ export default function LectureCapture() {
 
   // Save the audio only when it changes.
   useEffect(() => {
-    if (!restored || (audio?.blob ?? null) === savedBlobRef.current) return;
-    savedBlobRef.current = audio?.blob ?? null;
-    saveAudio(audio ? { blob: audio.blob, label: audio.label } : null);
-  }, [restored, audio]);
+    if (!restored || !persistenceEnabled || (audio?.blob ?? null) === savedBlobRef.current) return;
+    const attempt = ++audioSaveAttempt.current;
+    const t = setTimeout(async () => {
+      setAudioSave({ kind: "saving" });
+      const result = await saveAudio(audio ? { blob: audio.blob, label: audio.label, revision: audio.revision } : null);
+      if (attempt !== audioSaveAttempt.current) return;
+      if (result.ok) {
+        savedBlobRef.current = audio?.blob ?? null;
+        setAudioSave({ kind: "saved" });
+      } else if (result.reason === "too-large") {
+        setAudioSave({ kind: "too-large", maxBytes: result.maxBytes });
+      } else {
+        setAudioSave({ kind: "error", message: "The audio could not be saved in this browser." });
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [restored, persistenceEnabled, audio, saveRetry]);
 
   function onSaveProfile(p: TeacherProfile) {
     invalidateLectureWork();
     setProfile(p);
     // Fill blanks in the current lesson; never overwrite what the teacher typed for this lecture.
     setLesson((l) => ({ ...l, subject: l.subject || p.subject, grade: l.grade || p.grade }));
+  }
+
+  function onClearProfile() {
+    invalidateLectureWork();
+    setProfile(null);
   }
 
   function startOver() {
@@ -162,7 +211,9 @@ export default function LectureCapture() {
     setDiagram(null);
     setImageStatus({ kind: "idle" });
     setResultDiagram(null);
-    clearSession();
+    void clearSession().then((cleared) => {
+      if (!cleared.ok) setSessionSave({ kind: "error", message: "The previous saved lecture could not be cleared." });
+    });
   }
 
   const busy = status.kind === "decoding" || status.kind === "transcribing";
@@ -186,7 +237,7 @@ export default function LectureCapture() {
     const url = URL.createObjectURL(blob);
     setAudio((prev) => {
       if (prev) URL.revokeObjectURL(prev.url);
-      return { blob, url, label };
+      return { blob, url, label, revision: newAudioRevision() };
     });
     setTurns([]);
     setResult(null);
@@ -387,10 +438,34 @@ export default function LectureCapture() {
   }
 
   const words = turns.reduce((n, t) => n + t.text.split(/\s+/).filter(Boolean).length, 0);
+  const saveError = sessionSave.kind === "error" ? sessionSave.message : audioSave.kind === "error" ? audioSave.message : null;
+  const saveWarning = audioSave.kind === "warning" ? audioSave.message : null;
+  const saving = sessionSave.kind === "saving" || audioSave.kind === "saving";
 
   return (
     <section className="flex flex-col gap-6">
-      {restored && <ProfileCard profile={profile} onSave={onSaveProfile} />}
+      {restored && <ProfileCard profile={profile} onSave={onSaveProfile} onClear={onClearProfile} />}
+      {restored && (
+        <div
+          role="status"
+          className={`-mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${saveError || saveWarning || audioSave.kind === "too-large" ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400"}`}
+        >
+          <span>
+            {saveError ? saveError : saveWarning ? saveWarning : saving ? (
+              audioSave.kind === "too-large"
+                ? `Saving lecture details… The audio exceeds the ${Math.round(audioSave.maxBytes / (1024 * 1024))} MB browser-save limit and will not survive a refresh.`
+                : "Saving this lecture in your browser…"
+            ) : audioSave.kind === "too-large" ? (
+              <>Lecture details are saved, but this {((audio?.blob.size ?? 0) / (1024 * 1024)).toFixed(1)} MB audio exceeds the {Math.round(audioSave.maxBytes / (1024 * 1024))} MB browser-save limit. It will not survive a refresh.</>
+            ) : "Saved in this browser."}
+          </span>
+          {saveError && (
+            <button onClick={() => { setPersistenceEnabled(true); setSaveRetry((n) => n + 1); }} className="font-medium underline">
+              Retry save
+            </button>
+          )}
+        </div>
+      )}
       {(audio || turns.length > 0 || refImage || result) && (
         <div className="-mb-3 flex justify-end">
           <button onClick={startOver} disabled={controlsLocked} className="text-sm text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">

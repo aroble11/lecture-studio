@@ -32,6 +32,15 @@ export function saveProfile(p: TeacherProfile): boolean {
   }
 }
 
+export function clearProfile(): boolean {
+  try {
+    localStorage.removeItem(KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isEmptyProfile(p: TeacherProfile | null): boolean {
   return !p || Object.values(p).every((v) => !v.trim());
 }
