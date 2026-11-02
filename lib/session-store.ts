@@ -4,12 +4,13 @@
 import type { Turn } from "./audio-client";
 import type { DiagramResult } from "./diagram";
 import type { PreparedImage } from "./image-client";
-import type { GenerateResult } from "./materials";
+import type { GenerateResult, LessonContext } from "./materials";
 
 /** Audio larger than this isn't saved (the transcript still is). */
 const MAX_SAVED_AUDIO_BYTES = 100 * 1024 * 1024;
 
 export type SavedAudio = { blob: Blob; label: string };
+export type ResultSource = { turns: Turn[]; durationMs: number; context: LessonContext };
 
 export type SavedSession = {
   version: 1;
@@ -22,6 +23,8 @@ export type SavedSession = {
   refImage: (PreparedImage & { name: string }) | null;
   diagram: DiagramResult | null;
   result: GenerateResult | null;
+  /** Exact transcript and lesson inputs used to produce result. Older saves may lack it. */
+  resultSource?: ResultSource | null;
   resultDiagram: { image: string; result: DiagramResult } | null;
   /** Privacy Mode toggle (added Oct 31; older saves lack it). */
   privacy?: boolean;

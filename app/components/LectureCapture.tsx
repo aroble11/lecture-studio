@@ -5,8 +5,9 @@ import { decodeToMono, formatTime, SAMPLE_RATE, transcribeLecture, type Turn } f
 import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
+import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
-import { clearSession, loadSession, saveAudio, saveSession } from "@/lib/session-store";
+import { clearSession, loadSession, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
 
@@ -41,12 +42,15 @@ export default function LectureCapture() {
   const [gen, setGen] = useState<GenStatus>({ kind: "idle" });
   const [genElapsed, setGenElapsed] = useState(0);
   const [result, setResult] = useState<GenerateResult | null>(null);
+  const [resultSource, setResultSource] = useState<ResultSource | null>(null);
   const [refImage, setRefImage] = useState<RefImage | null>(null);
   const [diagram, setDiagram] = useState<DiagramResult | null>(null);
   const [imageStatus, setImageStatus] = useState<ImageStatus>({ kind: "idle" });
   /** Image + labels as they were when the current materials were generated. */
   const [resultDiagram, setResultDiagram] = useState<{ image: string; result: DiagramResult } | null>(null);
-  const labelRef = useRef<{ image: RefImage; promise: Promise<DiagramResult | null> } | null>(null);
+  const labelRef = useRef<{ image: RefImage; promise: Promise<DiagramResult | null>; controller: AbortController } | null>(null);
+  const lectureOps = useRef(createOperationRevision());
+  const imageOps = useRef(createOperationRevision());
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -60,10 +64,15 @@ export default function LectureCapture() {
   // Restore the last session after a page refresh.
   useEffect(() => {
     let cancelled = false;
+    const restoreRevision = lectureOps.current.revision();
     loadSession().then((saved) => {
       if (cancelled) return;
       const prof = loadProfile();
       setProfile(prof);
+      if (lectureOps.current.revision() !== restoreRevision) {
+        setRestored(true);
+        return;
+      }
       if (!saved && prof) setLesson((l) => ({ ...l, subject: prof.subject, grade: prof.grade }));
       if (saved) {
         if (saved.audio) {
@@ -75,13 +84,23 @@ export default function LectureCapture() {
         setTurns(saved.turns);
         setDurationMs(saved.durationMs);
         setResult(saved.result);
+        setResultSource(saved.result ? (saved.resultSource ?? {
+          turns: saved.turns,
+          durationMs: saved.durationMs,
+          context: {
+            ...saved.lesson,
+            vocabulary: saved.keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean),
+            style: prof?.style,
+            classNotes: prof?.classNotes,
+          },
+        }) : null);
         setResultDiagram(saved.resultDiagram);
         setPrivacy(saved.privacy ?? false);
         if (saved.refImage) {
           setRefImage(saved.refImage);
           if (saved.diagram) {
             setDiagram(saved.diagram);
-            labelRef.current = { image: saved.refImage, promise: Promise.resolve(saved.diagram) };
+            labelRef.current = { image: saved.refImage, promise: Promise.resolve(saved.diagram), controller: new AbortController() };
           } else {
             analyzeImage(saved.refImage); // the refresh interrupted analysis — run it again
           }
@@ -99,11 +118,16 @@ export default function LectureCapture() {
     const t = setTimeout(() => {
       saveSession({
         version: 1,
-        keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram, privacy,
+        keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [restored, keywords, lesson, turns, durationMs, refImage, diagram, result, resultDiagram, privacy]);
+  }, [restored, keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy]);
+
+  useEffect(() => () => {
+    lectureOps.current.invalidate();
+    imageOps.current.invalidate();
+  }, []);
 
   // Save the audio only when it changes.
   useEffect(() => {
@@ -113,6 +137,7 @@ export default function LectureCapture() {
   }, [restored, audio]);
 
   function onSaveProfile(p: TeacherProfile) {
+    invalidateLectureWork();
     setProfile(p);
     // Fill blanks in the current lesson; never overwrite what the teacher typed for this lecture.
     setLesson((l) => ({ ...l, subject: l.subject || p.subject, grade: l.grade || p.grade }));
@@ -120,6 +145,8 @@ export default function LectureCapture() {
 
   function startOver() {
     if (!window.confirm("Clear the audio, transcript, image, and materials and start a new lecture?")) return;
+    invalidateLectureWork();
+    imageOps.current.invalidate();
     if (audio) URL.revokeObjectURL(audio.url);
     labelRef.current = null;
     setAudio(null);
@@ -130,6 +157,7 @@ export default function LectureCapture() {
     setDurationMs(0);
     setGen({ kind: "idle" });
     setResult(null);
+    setResultSource(null);
     setRefImage(null);
     setDiagram(null);
     setImageStatus({ kind: "idle" });
@@ -139,8 +167,22 @@ export default function LectureCapture() {
 
   const busy = status.kind === "decoding" || status.kind === "transcribing";
   const recording = status.kind === "recording";
+  const generating = gen.kind === "generating";
+  const controlsLocked = !restored || busy || recording || generating;
+
+  function invalidateLectureWork() {
+    lectureOps.current.invalidate();
+    setGen({ kind: "idle" });
+    setStatus((current) => current.kind === "decoding" || current.kind === "transcribing" ? { kind: "idle" } : current);
+  }
+
+  function changeLectureInputs(change: () => void) {
+    invalidateLectureWork();
+    change();
+  }
 
   function selectAudio(blob: Blob, label: string) {
+    invalidateLectureWork();
     const url = URL.createObjectURL(blob);
     setAudio((prev) => {
       if (prev) URL.revokeObjectURL(prev.url);
@@ -148,6 +190,7 @@ export default function LectureCapture() {
     });
     setTurns([]);
     setResult(null);
+    setResultSource(null);
     setGen({ kind: "idle" });
     setStatus({ kind: "idle" });
   }
@@ -156,6 +199,8 @@ export default function LectureCapture() {
 
   /** Wonder names the objects in the image, SAM 3.1 boxes them. Runs as soon as an image is added. */
   function analyzeImage(img: RefImage) {
+    imageOps.current.invalidate();
+    const ticket = imageOps.current.begin();
     setDiagram(null);
     setImageStatus({ kind: "analyzing" });
     const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
@@ -165,29 +210,36 @@ export default function LectureCapture() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ image: img.dataUrl, context }),
+          signal: ticket.controller.signal,
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.summary) throw new Error(data?.error ?? `Image analysis failed (HTTP ${res.status})`);
-        if (labelRef.current?.image !== img) return null; // replaced or removed meanwhile
+        if (!imageOps.current.isCurrent(ticket) || labelRef.current?.image !== img) return null;
         setDiagram(data as DiagramResult);
         setImageStatus({ kind: "idle" });
         return data as DiagramResult;
       } catch (err) {
-        if (labelRef.current?.image === img) {
+        if (imageOps.current.isCurrent(ticket) && labelRef.current?.image === img) {
           setImageStatus({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
         }
         return null;
+      } finally {
+        imageOps.current.finish(ticket);
       }
     })();
-    labelRef.current = { image: img, promise };
+    labelRef.current = { image: img, promise, controller: ticket.controller };
   }
 
   async function onImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    invalidateLectureWork();
+    imageOps.current.invalidate();
+    const revision = lectureOps.current.revision();
     try {
       const prepared = await prepareImage(file);
+      if (lectureOps.current.revision() !== revision) return;
       const img: RefImage = { ...prepared, name: file.name };
       setRefImage(img);
       analyzeImage(img);
@@ -197,6 +249,8 @@ export default function LectureCapture() {
   }
 
   function removeImage() {
+    invalidateLectureWork();
+    imageOps.current.invalidate();
     labelRef.current = null;
     setRefImage(null);
     setDiagram(null);
@@ -204,15 +258,23 @@ export default function LectureCapture() {
   }
 
   async function generate() {
+    const ticket = lectureOps.current.begin();
     const startedAt = Date.now();
     setGen({ kind: "generating", startedAt });
     setGenElapsed(0);
     const tick = setInterval(() => setGenElapsed(Date.now() - startedAt), 1000);
     try {
       const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
+      const source: ResultSource = {
+        turns: turns.map((turn) => ({ ...turn })),
+        durationMs,
+        context: { ...context, vocabulary: context.vocabulary ? [...context.vocabulary] : undefined },
+      };
+      const usePrivacy = privacy;
       // If the reference image is still being analyzed, wait for it so its labels shape the materials.
       const pending = labelRef.current;
       const labeled = pending ? await pending.promise : null;
+      if (!lectureOps.current.isCurrent(ticket)) return;
       const img = pending?.image ?? null;
       const diagramContext: DiagramContext | undefined = labeled?.items.length
         ? { summary: labeled.summary, items: labeled.items.map(({ n, label }) => ({ n, label })) }
@@ -220,21 +282,29 @@ export default function LectureCapture() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turns, context, diagram: diagramContext, ...(privacy ? { privacy: true } : {}) }),
+        body: JSON.stringify({ turns: source.turns, context: source.context, diagram: diagramContext, ...(usePrivacy ? { privacy: true } : {}) }),
+        signal: ticket.controller.signal,
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.materials) throw new Error(data?.error ?? `Generation failed (HTTP ${res.status})`);
+      if (!lectureOps.current.isCurrent(ticket)) return;
       setResult(data as GenerateResult);
+      setResultSource(source);
       setResultDiagram(labeled && img && diagramContext ? { image: img.dataUrl, result: labeled } : null);
       setGen({ kind: "idle" });
     } catch (err) {
-      setGen({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
+      if (lectureOps.current.isCurrent(ticket)) {
+        setGen({ kind: "error", message: err instanceof Error ? err.message : "Something went wrong." });
+      }
     } finally {
       clearInterval(tick);
+      lectureOps.current.finish(ticket);
     }
   }
 
   async function startRecording() {
+    invalidateLectureWork();
+    const requestedRevision = lectureOps.current.revision();
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -242,6 +312,10 @@ export default function LectureCapture() {
       });
     } catch {
       setStatus({ kind: "error", message: "Microphone access was blocked. Allow it in the browser's address bar and try again." });
+      return;
+    }
+    if (lectureOps.current.revision() !== requestedRevision) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
     const recorder = new MediaRecorder(stream);
@@ -279,27 +353,36 @@ export default function LectureCapture() {
 
   async function transcribe() {
     if (!audio) return;
+    const ticket = lectureOps.current.begin();
+    const sourceAudio = audio;
     const started = Date.now();
     try {
       setStatus({ kind: "decoding" });
-      const samples = await decodeToMono(audio.blob);
+      const samples = await decodeToMono(sourceAudio.blob);
+      if (!lectureOps.current.isCurrent(ticket)) return;
       const ms = (samples.length / SAMPLE_RATE) * 1000;
       if (ms > MAX_MINUTES * 60_000) {
         throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(ms)}.`);
       }
       setDurationMs(ms);
       const transcript = await transcribeLecture(samples, vocabulary(), {
-        onProgress: (p) => setStatus({ kind: "transcribing", ...p }),
+        onProgress: (p) => { if (lectureOps.current.isCurrent(ticket)) setStatus({ kind: "transcribing", ...p }); },
+        signal: ticket.controller.signal,
       });
+      if (!lectureOps.current.isCurrent(ticket)) return;
       setTurns(transcript);
       setResult(null);
+      setResultSource(null);
       setStatus({ kind: "done", seconds: (Date.now() - started) / 1000 });
     } catch (err) {
+      if (!lectureOps.current.isCurrent(ticket)) return;
       const message =
         err instanceof DOMException && err.name === "EncodingError"
           ? "This browser couldn't read that audio file. Try m4a, mp3, or wav."
           : err instanceof Error ? err.message : "Something went wrong.";
       setStatus({ kind: "error", message });
+    } finally {
+      lectureOps.current.finish(ticket);
     }
   }
 
@@ -310,7 +393,7 @@ export default function LectureCapture() {
       {restored && <ProfileCard profile={profile} onSave={onSaveProfile} />}
       {(audio || turns.length > 0 || refImage || result) && (
         <div className="-mb-3 flex justify-end">
-          <button onClick={startOver} disabled={busy || recording || gen.kind === "generating"} className="text-sm text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
+          <button onClick={startOver} disabled={controlsLocked} className="text-sm text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
             Start over
           </button>
         </div>
@@ -327,13 +410,13 @@ export default function LectureCapture() {
               ■ Stop · {formatTime(elapsed)}
             </button>
           ) : (
-            <button onClick={startRecording} disabled={busy} className="rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300">
+            <button onClick={startRecording} disabled={controlsLocked} className="rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300">
               ● Record
             </button>
           )}
-          <label className={`cursor-pointer rounded-lg border border-zinc-300 px-4 py-2 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${recording || busy ? "pointer-events-none opacity-40" : ""}`}>
+          <label className={`cursor-pointer rounded-lg border border-zinc-300 px-4 py-2 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}>
             Upload audio
-            <input type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg" onChange={onFile} className="hidden" />
+            <input type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg" onChange={onFile} disabled={controlsLocked} className="hidden" />
           </label>
         </div>
 
@@ -353,25 +436,26 @@ export default function LectureCapture() {
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium">
             Subject
-            <input value={lesson.subject} onChange={(e) => setLesson({ ...lesson, subject: e.target.value })} placeholder="U.S. History" className={inputClass} />
+            <input value={lesson.subject} onChange={(e) => changeLectureInputs(() => setLesson((l) => ({ ...l, subject: e.target.value })))} disabled={controlsLocked} placeholder="U.S. History" className={inputClass} />
           </label>
           <label className="text-sm font-medium">
             Grade
-            <input value={lesson.grade} onChange={(e) => setLesson({ ...lesson, grade: e.target.value })} placeholder="10" className={inputClass} />
+            <input value={lesson.grade} onChange={(e) => changeLectureInputs(() => setLesson((l) => ({ ...l, grade: e.target.value })))} disabled={controlsLocked} placeholder="10" className={inputClass} />
           </label>
           <label className="text-sm font-medium sm:col-span-2">
             Lesson objective
-            <input value={lesson.objective} onChange={(e) => setLesson({ ...lesson, objective: e.target.value })} placeholder="Students can explain why the Articles of Confederation were replaced" className={inputClass} />
+            <input value={lesson.objective} onChange={(e) => changeLectureInputs(() => setLesson((l) => ({ ...l, objective: e.target.value })))} disabled={controlsLocked} placeholder="Students can explain why the Articles of Confederation were replaced" className={inputClass} />
           </label>
           <label className="text-sm font-medium sm:col-span-2">
             Standards
-            <input value={lesson.standards} onChange={(e) => setLesson({ ...lesson, standards: e.target.value })} placeholder="e.g. C3 D2.His.14.9-12" className={inputClass} />
+            <input value={lesson.standards} onChange={(e) => changeLectureInputs(() => setLesson((l) => ({ ...l, standards: e.target.value })))} disabled={controlsLocked} placeholder="e.g. C3 D2.His.14.9-12" className={inputClass} />
           </label>
           <label className="text-sm font-medium sm:col-span-2">
             Key vocabulary <span className="font-normal text-zinc-500">(names and terms, separated by commas)</span>
             <textarea
               value={keywords}
-              onChange={(e) => setKeywords(e.target.value)}
+              onChange={(e) => changeLectureInputs(() => setKeywords(e.target.value))}
+              disabled={controlsLocked}
               rows={2}
               placeholder="Articles of Confederation, Shays' Rebellion, ratification"
               className={inputClass}
@@ -381,12 +465,12 @@ export default function LectureCapture() {
             <span className="font-medium">Reference image</span>{" "}
             <span className="text-zinc-500">(a slide, worksheet, diagram, or photo — we&apos;ll find objects to label)</span>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <label className="cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+              <label className={`cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}>
                 {refImage ? "Replace image" : "Add image"}
-                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onImage} className="hidden" />
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onImage} disabled={controlsLocked} className="hidden" />
               </label>
               {refImage && (
-                <button onClick={removeImage} className="text-zinc-500 underline hover:text-zinc-900 dark:hover:text-zinc-100">
+                <button onClick={removeImage} disabled={controlsLocked} className="text-zinc-500 underline hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
                   Remove
                 </button>
               )}
@@ -414,7 +498,7 @@ export default function LectureCapture() {
         </div>
         <button
           onClick={transcribe}
-          disabled={!audio || busy || recording}
+          disabled={!audio || controlsLocked}
           className="mt-4 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-40"
         >
           {busy ? "Transcribing…" : "Transcribe lecture"}
@@ -465,8 +549,8 @@ export default function LectureCapture() {
             <input
               type="checkbox"
               checked={privacy}
-              onChange={(e) => setPrivacy(e.target.checked)}
-              disabled={gen.kind === "generating"}
+              onChange={(e) => changeLectureInputs(() => setPrivacy(e.target.checked))}
+              disabled={controlsLocked}
               className="mt-1"
             />
             <span>
@@ -479,7 +563,7 @@ export default function LectureCapture() {
           </label>
           <button
             onClick={generate}
-            disabled={gen.kind === "generating" || busy}
+            disabled={controlsLocked}
             className="mt-4 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-40"
           >
             {gen.kind === "generating" ? `Generating… ${formatTime(genElapsed)}` : result ? "Regenerate" : "Generate materials"}
@@ -488,7 +572,12 @@ export default function LectureCapture() {
         </div>
       )}
 
-      {result && <MaterialsView result={result} diagram={resultDiagram} turns={turns} durationMs={durationMs} />}
+      {result && <MaterialsView
+        result={result}
+        diagram={resultDiagram}
+        turns={resultSource?.turns ?? turns}
+        durationMs={resultSource?.durationMs ?? durationMs}
+      />}
     </section>
   );
 }
