@@ -7,21 +7,23 @@ import ts from "typescript";
 
 function loader(provider = {}) {
   const cache = new Map();
-  const calls = { clients: [], responses: [], chats: [] };
+  const calls = { clients: [], responses: [], responseOptions: [], chats: [], chatOptions: [] };
   const responseQueue = [...(provider.responses ?? [])];
   const chatQueue = [...(provider.chats ?? [])];
   class OpenAI {
     constructor(options) {
       calls.clients.push(options);
-      this.responses = { create: async (request) => {
+      this.responses = { create: async (request, options) => {
         calls.responses.push(request);
+        calls.responseOptions.push(options);
         if (!responseQueue.length) throw new Error("Unexpected Responses API call");
         const value = responseQueue.shift();
         if (value instanceof Error) throw value;
         return value;
       } };
-      this.chat = { completions: { create: async (request) => {
+      this.chat = { completions: { create: async (request, options) => {
         calls.chats.push(request);
+        calls.chatOptions.push(options);
         if (!chatQueue.length) throw new Error("Unexpected Chat Completions call");
         const value = chatQueue.shift();
         if (value instanceof Error) throw value;
@@ -154,8 +156,12 @@ test("primary generation repairs a grounded missing blank, fixes its timestamp, 
   const correct = source.quiz[0].choices[source.quiz[0].answerIndex];
   const { load, calls } = loader({ responses: [response(source)] });
   const { generateMaterials } = load("lib/generate.ts");
-  const result = await generateMaterials(turns, {}, { apiKey: "test" });
+  const controller = new AbortController();
+  const result = await generateMaterials(turns, {}, { apiKey: "test", signal: controller.signal });
   assert.equal(calls.responses.length, 1);
+  assert.equal(calls.clients[0].maxRetries, 0);
+  assert.equal(calls.clients[0].timeout, 135_000);
+  assert.equal(calls.responseOptions[0].signal, controller.signal);
   assert.equal(result.materials.guidedNotes.sections[0].items[0].text, "_____ divides power between levels of government.");
   assert.equal(result.materials.guidedNotes.sections[0].startSec, 30);
   assert.equal(result.materials.quiz[0].choices[result.materials.quiz[0].answerIndex], correct);
@@ -176,11 +182,23 @@ test("malformed output from both standard models rejects instead of reaching the
   await assert.rejects(() => load("lib/generate.ts").generateMaterials(turns, {}, { apiKey: "test" }), /Invalid generated materials/);
 });
 
+test("an aborted standard generation does not spend its fallback attempt", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const { load, calls } = loader({ responses: [new Error("cancelled"), response(materials())] });
+  await assert.rejects(() => load("lib/generate.ts").generateMaterials(turns, {}, {
+    apiKey: "test", signal: controller.signal,
+  }), /cancelled/);
+  assert.equal(calls.responses.length, 1);
+});
+
 test("Privacy Mode retries the same provider after invalid output and accepts a complete JSON fence", async () => {
   const { load, calls } = loader({ chats: [chat({}), chat(`\`\`\`json\n${json(materials())}\n\`\`\``)] });
   const result = await load("lib/generate.ts").generatePrivately(turns, {}, { apiKey: "test" });
   assert.equal(calls.chats.length, 2);
   assert.equal(calls.responses.length, 0);
+  assert.equal(calls.clients[0].maxRetries, 0);
+  assert.equal(calls.clients[0].timeout, 135_000);
   assert.equal(result.privacy, true);
 });
 

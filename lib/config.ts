@@ -41,6 +41,8 @@ export const ASR = {
   /** Keyword-biasing limits we enforce on input. */
   maxKeywords: 50,
   maxKeywordLength: 80,
+  /** One browser chunk, including its optional HTTP retry, must finish inside this total budget. */
+  clientChunkTimeoutMs: 100_000,
 } as const;
 
 export const GENERATION = {
@@ -50,6 +52,8 @@ export const GENERATION = {
   maxOutputTokens: 16_000,
   /** Largest transcript body the route accepts (a 90-min lecture is ~100 KB of JSON). */
   maxBodyBytes: 1_000_000,
+  /** Per model call; two calls still leave ~30 s inside the route's 300 s ceiling. */
+  providerTimeoutMs: 135_000,
 } as const;
 
 export const LABELING = {
@@ -64,4 +68,7 @@ export const LABELING = {
   maxImageSide: 1600,
   /** Largest image the route accepts as a base64 data URL (Vercel caps request bodies at 4.5 MB). */
   maxBodyBytes: 4_000_000,
+  /** Primary + fallback planning plus parallel SAM stays under the route's 60 s ceiling. */
+  planTimeoutMs: 18_000,
+  segmentTimeoutMs: 15_000,
 } as const;

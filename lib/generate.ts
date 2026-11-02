@@ -158,7 +158,7 @@ function finish(raw: unknown, turns: Turn[], diagram?: DiagramContext): Material
   return validateMaterials(materials, turns, diagram, true);
 }
 
-async function callModel(client: OpenAI, model: string, input: string, turns: Turn[], diagram?: DiagramContext): Promise<Materials> {
+async function callModel(client: OpenAI, model: string, input: string, turns: Turn[], signal?: AbortSignal, diagram?: DiagramContext): Promise<Materials> {
   const res = await client.responses.create({
     model,
     reasoning: { effort: GENERATION.effort },
@@ -166,13 +166,13 @@ async function callModel(client: OpenAI, model: string, input: string, turns: Tu
     instructions: INSTRUCTIONS,
     input,
     text: { format: { type: "json_schema", name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
-  });
+  }, { signal });
   if (res.status !== "completed") throw new Error(`${model} returned status ${res.status}`);
   return finish(parseGeneratedJson(res.output_text), turns, diagram);
 }
 
 /** Privacy Mode call: Chat Completions on Baseten. Accept only a complete JSON object or one complete JSON fence. */
-async function callOpenModel(client: OpenAI, input: string, turns: Turn[], diagram?: DiagramContext): Promise<Materials> {
+async function callOpenModel(client: OpenAI, input: string, turns: Turn[], signal?: AbortSignal, diagram?: DiagramContext): Promise<Materials> {
   const res = await client.chat.completions.create({
     model: PRIVACY.model,
     max_tokens: PRIVACY.maxOutputTokens,
@@ -185,7 +185,7 @@ async function callOpenModel(client: OpenAI, input: string, turns: Turn[], diagr
       { role: "user", content: input },
     ],
     response_format: { type: "json_schema", json_schema: { name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
-  });
+  }, { signal });
   const choice = res.choices[0];
   if (!choice || choice.finish_reason !== "stop") {
     throw new Error(`${PRIVACY.model} returned finish reason ${choice?.finish_reason ?? "missing"}`);
@@ -198,17 +198,23 @@ async function callOpenModel(client: OpenAI, input: string, turns: Turn[], diagr
 export async function generatePrivately(
   turns: Turn[],
   ctx: LessonContext,
-  opts: { apiKey: string; diagram?: DiagramContext },
+  opts: { apiKey: string; diagram?: DiagramContext; signal?: AbortSignal },
 ): Promise<GenerateResult> {
-  const client = new OpenAI({ apiKey: opts.apiKey, baseURL: PRIVACY.baseURL });
+  const client = new OpenAI({
+    apiKey: opts.apiKey,
+    baseURL: PRIVACY.baseURL,
+    maxRetries: 0,
+    timeout: GENERATION.providerTimeoutMs,
+  });
   const input = buildInput(turns, ctx, opts.diagram);
   const t0 = Date.now();
   let materials: Materials;
   try {
-    materials = await callOpenModel(client, input, turns, opts.diagram);
+    materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     console.warn(`[generate] ${PRIVACY.model} failed, retrying once (Privacy Mode — no Meta fallback):`, err);
-    materials = await callOpenModel(client, input, turns, opts.diagram);
+    materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
   }
   return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
 }
@@ -216,19 +222,25 @@ export async function generatePrivately(
 export async function generateMaterials(
   turns: Turn[],
   ctx: LessonContext,
-  opts: { apiKey: string; baseURL?: string; diagram?: DiagramContext },
+  opts: { apiKey: string; baseURL?: string; diagram?: DiagramContext; signal?: AbortSignal },
 ): Promise<GenerateResult> {
-  const client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL ?? "https://api.meta.ai/v1" });
+  const client = new OpenAI({
+    apiKey: opts.apiKey,
+    baseURL: opts.baseURL ?? "https://api.meta.ai/v1",
+    maxRetries: 0,
+    timeout: GENERATION.providerTimeoutMs,
+  });
   const input = buildInput(turns, ctx, opts.diagram);
   const t0 = Date.now();
   let model: string = MODELS.generation;
   let materials: Materials;
   try {
-    materials = await callModel(client, model, input, turns, opts.diagram);
+    materials = await callModel(client, model, input, turns, opts.signal, opts.diagram);
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     console.warn(`[generate] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
     model = MODELS.generationFallback;
-    materials = await callModel(client, model, input, turns, opts.diagram);
+    materials = await callModel(client, model, input, turns, opts.signal, opts.diagram);
   }
   return { materials, model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }

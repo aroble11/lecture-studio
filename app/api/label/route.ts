@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
   return withUsageBudget("label", async () => {
     try {
-      const result = await analyzeImage(image, context, { apiKey, baseURL: process.env.META_API_BASE_URL });
+      const result = await analyzeImage(image, context, { apiKey, baseURL: process.env.META_API_BASE_URL, signal: request.signal });
       return Response.json(result);
     } catch (err) {
       console.error("[label]", err);

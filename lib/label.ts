@@ -68,7 +68,7 @@ function contextText(ctx: LessonContext) {
   return lines.length ? `Lesson context:\n${lines.join("\n")}` : "No lesson context given.";
 }
 
-async function planLabels(client: OpenAI, model: string, image: string, ctx: LessonContext): Promise<Plan> {
+async function planLabels(client: OpenAI, model: string, image: string, ctx: LessonContext, signal?: AbortSignal): Promise<Plan> {
   const res = await client.responses.create({
     model,
     reasoning: { effort: LABELING.effort },
@@ -84,7 +84,7 @@ async function planLabels(client: OpenAI, model: string, image: string, ctx: Les
       },
     ],
     text: { format: { type: "json_schema", name: "labels", strict: true, schema: PLAN_SCHEMA } },
-  });
+  }, { timeout: LABELING.planTimeoutMs, signal });
   if (res.status !== "completed") throw new Error(`${model} returned status ${res.status}`);
   return JSON.parse(res.output_text) as Plan;
 }
@@ -107,7 +107,7 @@ function parseBoxes(text: string): { box: Box; score: number }[] {
   return out;
 }
 
-async function segment(client: OpenAI, image: string, phrase: string) {
+async function segment(client: OpenAI, image: string, phrase: string, signal?: AbortSignal) {
   const res = await client.responses.create({
     model: MODELS.segmentation,
     input: [
@@ -120,7 +120,7 @@ async function segment(client: OpenAI, image: string, phrase: string) {
       },
     ],
     metadata: { include_confidence: "true", mask_encoding: "one_bit" },
-  });
+  }, { timeout: LABELING.segmentTimeoutMs, signal });
   return parseBoxes(res.output_text ?? "").filter((d) => d.score >= LABELING.minScore);
 }
 
@@ -160,19 +160,25 @@ function readingOrder<T extends { box: Box }>(items: T[]): T[] {
 export async function analyzeImage(
   image: string,
   ctx: LessonContext,
-  opts: { apiKey: string; baseURL?: string },
+  opts: { apiKey: string; baseURL?: string; signal?: AbortSignal },
 ): Promise<DiagramResult> {
-  const client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL ?? "https://api.meta.ai/v1" });
+  const client = new OpenAI({
+    apiKey: opts.apiKey,
+    baseURL: opts.baseURL ?? "https://api.meta.ai/v1",
+    maxRetries: 0,
+    timeout: LABELING.planTimeoutMs,
+  });
   const t0 = Date.now();
 
   let model: string = MODELS.generation;
   let plan: Plan;
   try {
-    plan = await planLabels(client, model, image, ctx);
+    plan = await planLabels(client, model, image, ctx, opts.signal);
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     console.warn(`[label] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
     model = MODELS.generationFallback;
-    plan = await planLabels(client, model, image, ctx);
+    plan = await planLabels(client, model, image, ctx, opts.signal);
   }
 
   const objects = plan.kind === "objects" ? plan.objects.slice(0, LABELING.maxItems) : [];
@@ -182,10 +188,11 @@ export async function analyzeImage(
       const label = o.label.trim().slice(0, 80);
       if (!phrase || !label) return null;
       try {
-        const matches = await segment(client, image, phrase);
+        const matches = await segment(client, image, phrase, opts.signal);
         const best = matches.length ? pick(matches, clampBox(o.approxBox)) : null;
         return best ? { label, phrase, box: clampBox(best.box), score: Math.round(best.score * 100) / 100 } : null;
       } catch (err) {
+        if (opts.signal?.aborted) throw err;
         console.warn(`[label] SAM failed for "${phrase}":`, err);
         return null;
       }

@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:usage": "node --test tests/paid-processing.test.mjs tests/usage-budget.test.mjs",
     "test:generation": "node --test tests/generation.test.mjs",
-    "test:state": "node --test tests/operation-revision.test.mjs"
+    "test:state": "node --test tests/operation-revision.test.mjs",
+    "test:timeouts": "node --test tests/timeouts.test.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",

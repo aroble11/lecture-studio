@@ -22,7 +22,7 @@ type TurnState = { startMs: number; endMs?: number; partial?: string; final?: st
 
 export async function transcribePcm(
   pcm: Uint8Array,
-  opts: { apiKey: string; keywords?: string[]; speed?: number },
+  opts: { apiKey: string; keywords?: string[]; speed?: number; signal?: AbortSignal },
 ): Promise<TranscribeResult> {
   const speed = opts.speed ?? ASR.speed;
   const bytesPerMs = (ASR.sampleRate * 2) / 1000;
@@ -32,6 +32,10 @@ export async function transcribePcm(
   const timeoutMs = audioMs / speed + 30_000;
 
   return new Promise<TranscribeResult>((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new Error("ASR request was cancelled"));
+      return;
+    }
     const ws = new WebSocket(META_ASR_URL);
     ws.binaryType = "arraybuffer";
 
@@ -42,11 +46,18 @@ export async function transcribePcm(
     let settled = false;
 
     const timer = setTimeout(() => fail(new Error(`ASR timed out after ${Math.round(timeoutMs / 1000)} s`)), timeoutMs);
+    const onAbort = () => fail(new Error("ASR request was cancelled"));
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+    function cleanup() {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+    }
 
     function fail(err: Error) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       try { ws.close(); } catch {}
       reject(err);
     }
@@ -54,7 +65,7 @@ export async function transcribePcm(
     function succeed() {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       const out: Turn[] = [...turns.values()]
         .map((t) => ({
           startMs: t.startMs,

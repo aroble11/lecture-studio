@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   return withUsageBudget("transcribe", async () => {
     try {
-      const result = await transcribePcm(pcm, { apiKey, keywords });
+      const result = await transcribePcm(pcm, { apiKey, keywords, signal: request.signal });
       return Response.json(result);
     } catch (err) {
       console.error("[transcribe]", err);

@@ -36,12 +36,13 @@ export async function POST(request: Request) {
       if (privacy) {
         const basetenKey = process.env.BASETEN_API_KEY;
         if (!basetenKey) return Response.json({ error: "Privacy Mode isn't set up on this server" }, { status: 503 });
-        return Response.json(await generatePrivately(turns, context, { apiKey: basetenKey, diagram }));
+        return Response.json(await generatePrivately(turns, context, { apiKey: basetenKey, diagram, signal: request.signal }));
       }
       const result = await generateMaterials(turns, context, {
         apiKey,
         baseURL: process.env.META_API_BASE_URL,
         diagram,
+        signal: request.signal,
       });
       return Response.json(result);
     } catch (err) {

@@ -90,19 +90,34 @@ function toPcm16(samples: Float32Array, chunk: Chunk): ArrayBuffer {
 
 async function transcribeChunk(pcm: ArrayBuffer, keywords: string[], signal?: AbortSignal): Promise<Turn[]> {
   const qs = keywords.map((k) => "kw=" + encodeURIComponent(k)).join("&");
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`/api/transcribe${qs ? "?" + qs : ""}`, {
-      method: "POST",
-      headers: { "content-type": "application/octet-stream" },
-      body: pcm,
-      signal,
-    });
-    if (res.ok) return ((await res.json()) as { turns: Turn[] }).turns;
-    // Client errors won't fix themselves; server/upstream errors get one retry.
-    if (res.status < 500 || attempt >= 2) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? `Transcription failed (HTTP ${res.status})`);
+  const deadline = new AbortController();
+  const onAbort = () => deadline.abort(signal?.reason);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => deadline.abort(new DOMException("Transcription timed out", "TimeoutError")), ASR.clientChunkTimeoutMs);
+  try {
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetch(`/api/transcribe${qs ? "?" + qs : ""}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: pcm,
+        signal: deadline.signal,
+      });
+      if (res.ok) return ((await res.json()) as { turns: Turn[] }).turns;
+      // Client errors won't fix themselves; server/upstream errors get one retry within the same total deadline.
+      if (res.status < 500 || attempt >= 2) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Transcription failed (HTTP ${res.status})`);
+      }
     }
+  } catch (err) {
+    if (deadline.signal.reason instanceof DOMException && deadline.signal.reason.name === "TimeoutError") {
+      throw new Error("Transcription timed out — try again");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -120,6 +135,10 @@ export async function transcribeLecture(
   let done = 0;
   opts.onProgress?.({ done, total: chunks.length });
 
+  const group = new AbortController();
+  const onAbort = () => group.abort(opts.signal?.reason);
+  if (opts.signal?.aborted) onAbort();
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
   let failed = false;
   async function worker() {
     while (!failed && next < chunks.length) {
@@ -127,7 +146,7 @@ export async function transcribeLecture(
       const chunk = chunks[i];
       const offsetMs = Math.round((chunk.start / SAMPLE_RATE) * 1000);
       try {
-        const turns = await transcribeChunk(toPcm16(samples, chunk), keywords, opts.signal);
+        const turns = await transcribeChunk(toPcm16(samples, chunk), keywords, group.signal);
         results[i] = turns.map((t) => ({
           text: tidy(t.text),
           startMs: t.startMs + offsetMs,
@@ -135,6 +154,7 @@ export async function transcribeLecture(
         }));
       } catch (err) {
         failed = true; // stop other workers from starting new chunks
+        group.abort(err);
         throw err;
       }
       opts.onProgress?.({ done: ++done, total: chunks.length });
@@ -142,8 +162,12 @@ export async function transcribeLecture(
   }
 
   const workers = Math.min(opts.concurrency ?? ASR.concurrency, chunks.length);
-  await Promise.all(Array.from({ length: workers }, worker));
-  return results.flat();
+  try {
+    await Promise.all(Array.from({ length: workers }, worker));
+    return results.flat();
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 /** The ASR sometimes returns a whole turn in lowercase: capitalize the first letter and the
