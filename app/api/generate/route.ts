@@ -7,6 +7,7 @@ import { GENERATION } from "@/lib/config";
 import { generateMaterials, generatePrivately } from "@/lib/generate";
 import { paidProcessingUnavailable } from "@/lib/paid-processing";
 import { withUsageBudget } from "@/lib/usage-budget";
+import { readBoundedJson } from "@/lib/request-body";
 import type { DiagramContext } from "@/lib/diagram";
 import type { LessonContext } from "@/lib/materials";
 import type { Turn } from "@/lib/meta-asr";
@@ -23,22 +24,14 @@ export async function POST(request: Request) {
   const apiKey = process.env.META_API_KEY;
   if (!apiKey) return Response.json({ error: "Server is missing META_API_KEY" }, { status: 500 });
 
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > GENERATION.maxBodyBytes) {
-    return Response.json({ error: "Transcript too large" }, { status: 413 });
-  }
-
-  let body: {
+  const parsed = await readBoundedJson<{
     turns?: unknown;
     context?: Record<string, unknown>;
     diagram?: { summary?: unknown; items?: unknown };
     privacy?: unknown;
-  };
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Send JSON" }, { status: 400 });
-  }
+  }>(request, GENERATION.maxBodyBytes);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
 
   const turns: Turn[] = (Array.isArray(body.turns) ? body.turns : [])
     .filter((t): t is Turn => typeof t?.text === "string" && t.text.trim() !== "" && Number.isFinite(t.startMs))

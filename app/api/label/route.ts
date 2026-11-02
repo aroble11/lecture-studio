@@ -5,6 +5,7 @@ import { LABELING } from "@/lib/config";
 import { analyzeImage } from "@/lib/label";
 import { paidProcessingUnavailable } from "@/lib/paid-processing";
 import { withUsageBudget } from "@/lib/usage-budget";
+import { readBoundedJson } from "@/lib/request-body";
 import type { LessonContext } from "@/lib/materials";
 
 // Wonder (~8 s) + parallel SAM requests (~2 s); leave room for a fallback retry.
@@ -19,15 +20,9 @@ export async function POST(request: Request) {
   const apiKey = process.env.META_API_KEY;
   if (!apiKey) return Response.json({ error: "Server is missing META_API_KEY" }, { status: 500 });
 
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > LABELING.maxBodyBytes) return Response.json({ error: "Image too large" }, { status: 413 });
-
-  let body: { image?: unknown; context?: Record<string, unknown> };
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Send JSON" }, { status: 400 });
-  }
+  const parsed = await readBoundedJson<{ image?: unknown; context?: Record<string, unknown> }>(request, LABELING.maxBodyBytes);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
 
   const image = typeof body.image === "string" ? body.image : "";
   if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) {

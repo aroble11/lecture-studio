@@ -5,6 +5,7 @@ import { ASR } from "@/lib/config";
 import { transcribePcm } from "@/lib/meta-asr";
 import { paidProcessingUnavailable } from "@/lib/paid-processing";
 import { withUsageBudget } from "@/lib/usage-budget";
+import { readBoundedBytes } from "@/lib/request-body";
 
 // One ~60 s chunk at 2x takes ~30 s (max 75 s chunk ≈ 40 s); leave headroom for slow handshakes.
 export const maxDuration = 120;
@@ -19,16 +20,10 @@ export async function POST(request: Request) {
   if (!request.headers.get("content-type")?.startsWith("application/octet-stream")) {
     return Response.json({ error: "Send raw PCM16 audio as application/octet-stream" }, { status: 415 });
   }
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > ASR.maxChunkBytes) {
-    return Response.json({ error: `Chunk too large (max ${ASR.maxChunkBytes} bytes)` }, { status: 413 });
-  }
-
-  const pcm = new Uint8Array(await request.arrayBuffer());
+  const body = await readBoundedBytes(request, ASR.maxChunkBytes);
+  if (!body.ok) return body.response;
+  const pcm = body.value;
   if (pcm.length === 0) return Response.json({ error: "Empty audio" }, { status: 400 });
-  if (pcm.length > ASR.maxChunkBytes) {
-    return Response.json({ error: `Chunk too large (max ${ASR.maxChunkBytes} bytes)` }, { status: 413 });
-  }
   if (pcm.length % 2 !== 0) return Response.json({ error: "PCM16 length must be even" }, { status: 400 });
 
   const keywords = [
