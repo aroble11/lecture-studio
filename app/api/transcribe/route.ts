@@ -3,11 +3,16 @@
 // Returns: { turns: [{ startMs, endMs, text }], audioMs, sessionId } — times relative to the chunk.
 import { ASR } from "@/lib/config";
 import { transcribePcm } from "@/lib/meta-asr";
+import { paidProcessingUnavailable } from "@/lib/paid-processing";
+import { withUsageBudget } from "@/lib/usage-budget";
 
 // One ~60 s chunk at 2x takes ~30 s (max 75 s chunk ≈ 40 s); leave headroom for slow handshakes.
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
+  const paused = paidProcessingUnavailable();
+  if (paused) return paused;
+
   const apiKey = process.env.META_API_KEY;
   if (!apiKey) return Response.json({ error: "Server is missing META_API_KEY" }, { status: 500 });
 
@@ -35,11 +40,13 @@ export async function POST(request: Request) {
     ),
   ].slice(0, ASR.maxKeywords);
 
-  try {
-    const result = await transcribePcm(pcm, { apiKey, keywords });
-    return Response.json(result);
-  } catch (err) {
-    console.error("[transcribe]", err);
-    return Response.json({ error: "Transcription failed — try again" }, { status: 502 });
-  }
+  return withUsageBudget("transcribe", async () => {
+    try {
+      const result = await transcribePcm(pcm, { apiKey, keywords });
+      return Response.json(result);
+    } catch (err) {
+      console.error("[transcribe]", err);
+      return Response.json({ error: "Transcription failed — try again" }, { status: 502 });
+    }
+  });
 }
