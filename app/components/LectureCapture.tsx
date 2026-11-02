@@ -82,7 +82,8 @@ export default function LectureCapture() {
     const restoreRevision = lectureOps.current.revision();
     loadSession().then((loaded) => {
       if (cancelled) return;
-      const prof = loadProfile();
+      const loadedProfile = loadProfile();
+      const prof = loadedProfile.profile;
       setProfile(prof);
       if (lectureOps.current.revision() !== restoreRevision) {
         setPersistenceEnabled(true);
@@ -90,14 +91,15 @@ export default function LectureCapture() {
         return;
       }
       if (!loaded.ok) {
-        setSessionSave({ kind: "error", message: "This browser could not read saved lecture data." });
+        setSessionSave({ kind: "error", message: loaded.error });
         setRestored(true);
         return;
       }
       const saved = loaded.value;
       setPersistenceEnabled(true);
       setSessionSave({ kind: "saved" });
-      if (loaded.warning) setAudioSave({ kind: "warning", message: loaded.warning });
+      const restoreWarning = loaded.warning ?? loadedProfile.warning;
+      if (restoreWarning) setAudioSave({ kind: "warning", message: restoreWarning });
       if (!saved && prof) setLesson((l) => ({ ...l, subject: prof.subject, grade: prof.grade }));
       if (saved) {
         if (saved.audio) {

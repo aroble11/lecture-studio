@@ -60,6 +60,22 @@ function loadSessionStore(indexedDB = new FakeIndexedDB()) {
   return { store: compiled.exports, indexedDB };
 }
 
+function loadProfileStore(initial) {
+  const values = new Map();
+  if (initial !== undefined) values.set("lecture-studio:profile", initial);
+  const localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const source = ts.transpileModule(fs.readFileSync("lib/profile-store.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const compiled = { exports: {} };
+  vm.runInNewContext(source, { module: compiled, exports: compiled.exports, localStorage });
+  return { store: compiled.exports, values };
+}
+
 const session = (audioRevision = null) => ({
   version: 1,
   audioRevision,
@@ -130,6 +146,45 @@ test("audio failures are returned and can succeed on a later retry", async () =>
   assert.equal(failed.ok, false);
   assert.equal(failed.reason, "error");
   assert.equal((await store.saveAudio(audio)).ok, true);
+});
+
+test("invalid core saved data is rejected instead of reaching the UI", async () => {
+  const { store, indexedDB } = loadSessionStore();
+  indexedDB.data.set("current", { ...session(), turns: [{ startMs: 100, endMs: 50, text: "bad" }] });
+  const loaded = await store.loadSession();
+  assert.equal(loaded.ok, false);
+  assert.match(loaded.error, /invalid/i);
+});
+
+test("invalid optional saved artifacts are removed while lecture data is preserved", async () => {
+  const { store, indexedDB } = loadSessionStore();
+  indexedDB.data.set("current", {
+    ...session(),
+    turns: [{ startMs: 0, endMs: 1000, text: "A valid transcript" }],
+    refImage: { dataUrl: "data:image/jpeg;base64,AA==", width: 1, height: 1, name: "reference.jpg" },
+    diagram: { kind: "objects", summary: "bad", items: [{ n: 99 }], model: "x", seconds: 1 },
+  });
+  const loaded = await store.loadSession();
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.value.turns[0].text, "A valid transcript");
+  assert.equal(loaded.value.durationMs, 1000);
+  assert.equal(loaded.value.diagram, null);
+  assert.match(loaded.warning, /image labels/);
+});
+
+test("invalid profile shapes are ignored with a visible warning", () => {
+  const { store } = loadProfileStore(JSON.stringify({ subject: ["not text"], grade: "10" }));
+  const loaded = store.loadProfile();
+  assert.equal(loaded.profile, null);
+  assert.match(loaded.warning, /invalid saved teaching profile/i);
+  assert.equal(store.isEmptyProfile(loaded.profile), true);
+});
+
+test("legacy profiles receive missing fields but cannot exceed current limits", () => {
+  const { store } = loadProfileStore(JSON.stringify({ subject: "Biology", grade: "9" }));
+  const loaded = store.loadProfile();
+  assert.deepEqual({ ...loaded.profile }, { subject: "Biology", grade: "9", style: "", classNotes: "" });
+  assert.equal(store.saveProfile({ subject: "x".repeat(101), grade: "", style: "", classNotes: "" }), false);
 });
 
 test("profile deletion removes only the browser profile and reports blocked storage", () => {

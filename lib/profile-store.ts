@@ -14,18 +14,34 @@ export const EMPTY_PROFILE: TeacherProfile = { subject: "", grade: "", style: ""
 
 const KEY = "lecture-studio:profile";
 
-export function loadProfile(): TeacherProfile | null {
+export type ProfileLoadResult = { profile: TeacherProfile | null; warning?: string };
+
+export function validateSavedProfile(value: unknown): TeacherProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid profile");
+  const source = value as Record<string, unknown>;
+  const field = (name: keyof TeacherProfile, max: number) => {
+    const item = source[name];
+    if (item === undefined) return "";
+    if (typeof item !== "string" || item.length > max) throw new Error(`invalid ${name}`);
+    return item;
+  };
+  return { subject: field("subject", 100), grade: field("grade", 50), style: field("style", 600), classNotes: field("classNotes", 600) };
+}
+
+export function loadProfile(): ProfileLoadResult {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...EMPTY_PROFILE, ...JSON.parse(raw) } : null;
+    if (!raw) return { profile: null };
+    const value: unknown = JSON.parse(raw);
+    return { profile: validateSavedProfile(value) };
   } catch {
-    return null;
+    return { profile: null, warning: "An invalid saved teaching profile was ignored. Save the profile again to replace it." };
   }
 }
 
 export function saveProfile(p: TeacherProfile): boolean {
   try {
-    localStorage.setItem(KEY, JSON.stringify(p));
+    localStorage.setItem(KEY, JSON.stringify(validateSavedProfile(p)));
     return true;
   } catch {
     return false;

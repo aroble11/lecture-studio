@@ -83,11 +83,11 @@ export default function ProfileCard({
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="text-sm font-medium">
           Subject you usually teach
-          <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} placeholder="U.S. History" className={inputClass} />
+          <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} maxLength={100} placeholder="U.S. History" className={inputClass} />
         </label>
         <label className="text-sm font-medium">
           Grade
-          <input value={draft.grade} onChange={(e) => setDraft({ ...draft, grade: e.target.value })} placeholder="10" className={inputClass} />
+          <input value={draft.grade} onChange={(e) => setDraft({ ...draft, grade: e.target.value })} maxLength={50} placeholder="10" className={inputClass} />
         </label>
         <label className="text-sm font-medium sm:col-span-2">
           How you like materials written

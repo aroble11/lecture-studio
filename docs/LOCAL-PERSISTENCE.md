@@ -1,6 +1,6 @@
 # Local persistence status and consistency
 
-Hardening item 8 makes browser persistence visible and revision-safe.
+Hardening items 8 and 10 make browser persistence visible, revision-safe, and safe to restore.
 
 - The page reports when lecture data is saving, saved, or unsaved. Failed session or audio writes
   show a retry action instead of being logged silently.
@@ -17,10 +17,18 @@ Hardening item 8 makes browser persistence visible and revision-safe.
 - Existing saves remain compatible. Legacy audio is assigned a revision and rewritten once.
 - The teacher profile remains separate from the current lecture and now has its own confirmed
   **Delete profile** action. Storage failures are shown in the profile card.
+- IndexedDB and localStorage records are treated as untrusted input. Core lecture fields, transcript
+  timing and size, images, labels, generated materials, source snapshots, audio metadata, and profile
+  fields are validated before they reach the UI.
+- An invalid core session is rejected without being overwritten automatically. If only an optional
+  artifact is damaged, the valid lecture is restored, that artifact is removed, and the teacher sees
+  a warning. Older profiles with missing fields are migrated to the current shape.
 
 Run `npm run test:persistence` for offline write-failure, retry, revision-match, oversized-audio,
-and profile-deletion coverage. Tests use in-memory browser-storage doubles and no network services.
+profile-deletion, corrupt-session, optional-artifact recovery, and legacy-profile coverage. Tests use
+in-memory browser-storage doubles and no network services.
 
-Verified locally: 6 persistence tests, 6 timeout/cancellation tests, 11 generation-validation
-tests, 4 operation-revision tests, and 113 existing offline tests passed; the one optional live
-Redis integration test was skipped. Lint, TypeScript, and the owner's production build passed.
+Verified locally: 10 persistence tests, 6 timeout/cancellation tests, 11 generation-validation
+tests, 4 operation-revision tests, 3 privacy-copy tests, and 115 route/budget tests passed; the one
+optional live Redis integration test was skipped. Lint, TypeScript, and the owner's production build
+passed, including the static privacy route.
