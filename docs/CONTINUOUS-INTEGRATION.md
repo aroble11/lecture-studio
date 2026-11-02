@@ -1,0 +1,20 @@
+# Continuous integration
+
+Hardening item 12 adds a single offline test command and a tracked GitHub Actions quality gate.
+
+- `npm test` runs only `tests/*.test.mjs`. The live provider probes in the repository root are not
+  auto-discovered, so CI cannot spend API credits.
+- Pushes to `main` and pull requests run locked dependency installation, lint, TypeScript, the
+  offline test suite, and a production build on Node.js 24.
+- The workflow receives no provider or Redis secrets and has read-only repository permissions.
+- Checkout does not persist Git credentials. Third-party actions are pinned to the full immutable
+  commit SHAs for their verified v7 releases rather than mutable version tags.
+- Concurrent runs for the same ref are cancelled, and the job has a 15-minute timeout.
+
+The action versions were checked against the official `actions/checkout` and `actions/setup-node`
+release pages on November 1, 2026. The CI configuration has regression tests in
+`tests/ci-config.test.mjs`.
+
+Verified locally and in the owner's terminal: `npm test` passed 155 tests with zero failures; the
+one optional live Redis integration test was skipped. Lint and TypeScript also passed. The workflow's
+production-build step will be verified by its first GitHub Actions run after push.
