@@ -8,16 +8,18 @@ import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
 import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
+import { RECORDING_LIMITS, recordingLimitMessage, recordingLimitReason, stopMediaRecorder, stopMediaStream, type RecordingLimitReason } from "@/lib/recording-lifecycle";
 import { clearSession, loadSession, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
 
-const MAX_FILE_MB = 300;
-const MAX_MINUTES = 90;
+const MAX_FILE_MB = RECORDING_LIMITS.bytes / (1024 * 1024);
+const MAX_MINUTES = RECORDING_LIMITS.durationMs / 60_000;
 
 type Audio = { blob: Blob; url: string; label: string; revision: string };
 type Status =
   | { kind: "idle" }
+  | { kind: "requesting-microphone" }
   | { kind: "recording"; startedAt: number }
   | { kind: "decoding" }
   | { kind: "transcribing"; done: number; total: number }
@@ -62,7 +64,12 @@ export default function LectureCapture() {
   const imageOps = useRef(createOperationRevision());
 
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const microphoneRequestRef = useRef(0);
+  const mountedRef = useRef(true);
+  const discardRecordingRef = useRef(false);
+  const [recordingNotice, setRecordingNotice] = useState<string | null>(null);
   /** False until the saved session has been read, so the empty first render doesn't overwrite it. */
   const [restored, setRestored] = useState(false);
   /** Audio blob currently in storage, so it's written once per new recording or upload. */
@@ -158,9 +165,23 @@ export default function LectureCapture() {
     return () => { clearTimeout(statusTimer); clearTimeout(t); };
   }, [restored, persistenceEnabled, audio, keywords, lesson, turns, durationMs, refImage, diagram, result, resultSource, resultDiagram, privacy, saveRetry]);
 
-  useEffect(() => () => {
-    lectureOps.current.invalidate();
-    imageOps.current.invalidate();
+  useEffect(() => {
+    mountedRef.current = true;
+    const lectureOperations = lectureOps.current;
+    const imageOperations = imageOps.current;
+    return () => {
+      mountedRef.current = false;
+      microphoneRequestRef.current += 1;
+      discardRecordingRef.current = true;
+      stopMediaRecorder(recorderRef.current);
+      stopMediaStream(streamRef.current);
+      recorderRef.current = null;
+      streamRef.current = null;
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      lectureOperations.invalidate();
+      imageOperations.invalidate();
+    };
   }, []);
 
   // Save the audio only when it changes.
@@ -220,9 +241,10 @@ export default function LectureCapture() {
   }
 
   const busy = status.kind === "decoding" || status.kind === "transcribing";
+  const requestingMicrophone = status.kind === "requesting-microphone";
   const recording = status.kind === "recording";
   const generating = gen.kind === "generating";
-  const controlsLocked = !restored || busy || recording || generating;
+  const controlsLocked = !restored || busy || requestingMicrophone || recording || generating;
 
   function invalidateLectureWork() {
     lectureOps.current.invalidate();
@@ -359,39 +381,86 @@ export default function LectureCapture() {
   async function startRecording() {
     invalidateLectureWork();
     const requestedRevision = lectureOps.current.revision();
+    const requestId = ++microphoneRequestRef.current;
+    discardRecordingRef.current = false;
+    setRecordingNotice(null);
+    setStatus({ kind: "requesting-microphone" });
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: false, noiseSuppression: true },
       });
     } catch {
+      if (!mountedRef.current || requestId !== microphoneRequestRef.current) return;
       setStatus({ kind: "error", message: "Microphone access was blocked. Allow it in the browser's address bar and try again." });
       return;
     }
-    if (lectureOps.current.revision() !== requestedRevision) {
-      stream.getTracks().forEach((track) => track.stop());
+    if (!mountedRef.current || requestId !== microphoneRequestRef.current || lectureOps.current.revision() !== requestedRevision) {
+      stopMediaStream(stream);
       return;
     }
-    const recorder = new MediaRecorder(stream);
+    streamRef.current = stream;
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, { audioBitsPerSecond: RECORDING_LIMITS.audioBitsPerSecond });
+    } catch {
+      stopMediaStream(stream);
+      streamRef.current = null;
+      setStatus({ kind: "error", message: "This browser could not start an audio recording." });
+      return;
+    }
     const parts: Blob[] = [];
-    recorder.ondataavailable = (e) => { if (e.data.size) parts.push(e.data); };
+    let recordedBytes = 0;
+    let limitReason: RecordingLimitReason | null = null;
+    const startedAt = Date.now();
+    recorder.ondataavailable = (e) => {
+      if (!e.data.size) return;
+      parts.push(e.data);
+      recordedBytes += e.data.size;
+      limitReason ??= recordingLimitReason(Date.now() - startedAt, recordedBytes);
+      if (limitReason) stopMediaRecorder(recorder);
+    };
     recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
+      stopMediaStream(stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (recorderRef.current === recorder) recorderRef.current = null;
       if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      if (!mountedRef.current || discardRecordingRef.current) return;
       const blob = new Blob(parts, { type: recorder.mimeType });
       selectAudio(blob, `Recording (${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})`);
+      if (limitReason) setRecordingNotice(recordingLimitMessage(limitReason));
     };
-    recorder.start(1000);
-    recorderRef.current = recorder;
-    const startedAt = Date.now();
-    setElapsed(0);
-    timerRef.current = setInterval(() => setElapsed(Date.now() - startedAt), 500);
-    setStatus({ kind: "recording", startedAt });
+    recorder.onerror = () => {
+      discardRecordingRef.current = true;
+      stopMediaRecorder(recorder);
+      stopMediaStream(stream);
+      if (recorderRef.current === recorder) recorderRef.current = null;
+      if (streamRef.current === stream) streamRef.current = null;
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      if (mountedRef.current) setStatus({ kind: "error", message: "The recording stopped because the browser reported a microphone error." });
+    };
+    try {
+      recorder.start(1000);
+      recorderRef.current = recorder;
+      setElapsed(0);
+      timerRef.current = setInterval(() => {
+        const nextElapsed = Date.now() - startedAt;
+        setElapsed(nextElapsed);
+        limitReason ??= recordingLimitReason(nextElapsed, recordedBytes);
+        if (limitReason) stopMediaRecorder(recorder);
+      }, 500);
+      setStatus({ kind: "recording", startedAt });
+    } catch {
+      stopMediaStream(stream);
+      streamRef.current = null;
+      setStatus({ kind: "error", message: "This browser could not start an audio recording." });
+    }
   }
 
   function stopRecording() {
-    recorderRef.current?.stop();
-    recorderRef.current = null;
+    stopMediaRecorder(recorderRef.current);
   }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -495,7 +564,7 @@ export default function LectureCapture() {
             </button>
           ) : (
             <button onClick={startRecording} disabled={controlsLocked} className="rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300">
-              ● Record
+              {requestingMicrophone ? "Waiting for microphone…" : "● Record"}
             </button>
           )}
           <label className={`cursor-pointer rounded-lg border border-zinc-300 px-4 py-2 font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900 ${controlsLocked ? "pointer-events-none opacity-40" : ""}`}>
@@ -503,6 +572,8 @@ export default function LectureCapture() {
             <input type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg" onChange={onFile} disabled={controlsLocked} className="hidden" />
           </label>
         </div>
+        {requestingMicrophone && <p role="status" className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">Waiting for microphone permission…</p>}
+        {recordingNotice && <p role="status" className="mt-3 text-sm text-amber-700 dark:text-amber-300">{recordingNotice}</p>}
 
         {audio && !recording && (
           <div className="mt-4 flex flex-col gap-2">

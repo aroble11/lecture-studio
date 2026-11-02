@@ -12,7 +12,8 @@
     "test:state": "node --test tests/operation-revision.test.mjs",
     "test:timeouts": "node --test tests/timeouts.test.mjs",
     "test:persistence": "node --test tests/persistence.test.mjs",
-    "test:privacy": "node --test tests/privacy.test.mjs"
+    "test:privacy": "node --test tests/privacy.test.mjs",
+    "test:recording": "node --test tests/recording-lifecycle.test.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
