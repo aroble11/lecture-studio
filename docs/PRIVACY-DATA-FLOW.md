@@ -18,5 +18,6 @@ open-weight **materials generation**.
 The request field and saved-session property remain named privacy for backward compatibility;
 their documented meaning is now the narrower provider selection above.
 
-Run npm run test:privacy for disclosure-copy coverage. Provider-selection regression tests are in
-npm run test:usage; all calls are stubbed and spend no API credits.
+The browser tests (`npm run test:e2e`) check the rendered disclosures on the capture screen and the
+privacy page, and that the open-weight badge appears on open-weight results. Provider-selection
+regression tests are in `npm run test:usage`; all calls are stubbed and spend no API credits.

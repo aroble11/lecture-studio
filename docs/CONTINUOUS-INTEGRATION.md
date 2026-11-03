@@ -5,7 +5,12 @@ Hardening item 12 adds a single offline test command and a tracked GitHub Action
 - `npm test` runs only `tests/*.test.mjs`. The live provider probes in the repository root are not
   auto-discovered, so CI cannot spend API credits.
 - Pushes to `main` and pull requests run locked dependency installation, a production dependency
-  advisory audit, lint, TypeScript, the offline test suite, and a production build on Node.js 24.
+  advisory audit, lint, TypeScript, the offline test suite, a production build, and browser
+  end-to-end tests on Node.js 24.
+- The browser tests (`npm run test:e2e`, Playwright with Chromium) start the built app with
+  `PAID_PROCESSING_ENABLED=false` and mock every `/api` response in the browser. They cover upload,
+  transcription (including a busy retry), generation, refresh restore, Start over, keyboard access
+  to the upload controls, and the data-flow disclosures on the capture and privacy pages.
 - The TypeScript command runs `next typegen` first so global App Router helpers such as
   `LayoutProps` exist in a clean checkout, as required by Next.js 16.
 - The workflow receives no provider or Redis secrets and has read-only repository permissions.

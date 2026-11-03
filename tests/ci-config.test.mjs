@@ -20,12 +20,21 @@ test("production dependency advisories fail locally and in CI", () => {
 });
 
 test("CI runs every local quality gate and needs no provider secrets", () => {
-  for (const command of ["npm ci", "npm run audit:prod", "npm run lint", "npm run typecheck", "npm test", "npm run build"]) {
+  for (const command of ["npm ci", "npm run audit:prod", "npm run lint", "npm run typecheck", "npm test", "npm run build", "npm run test:e2e"]) {
     assert.match(workflow, new RegExp(command.replaceAll(" ", "\\s+")));
   }
   assert.doesNotMatch(workflow, /secrets\.|META_API_KEY|BASETEN_API_KEY|LIMITS_KV_/);
   assert.match(workflow, /permissions:\s*\n\s*contents: read/);
   assert.match(workflow, /persist-credentials: false/);
+});
+
+test("browser tests run against the production build with paid processing off", () => {
+  assert.equal(packageJson.scripts["test:e2e"], "playwright test");
+  assert.ok(workflow.indexOf("npm run test:e2e") > workflow.indexOf("npm run build"), "e2e must run after the build");
+  const config = fs.readFileSync("playwright.config.mjs", "utf8");
+  assert.match(config, /next start/);
+  assert.match(config, /PAID_PROCESSING_ENABLED: "false"/);
+  assert.match(fs.readFileSync("e2e/lecture-flow.spec.mjs", "utf8"), /page\.route\("\*\*\/api\/\*\*"/);
 });
 
 test("third-party actions are pinned to complete commit SHAs", () => {

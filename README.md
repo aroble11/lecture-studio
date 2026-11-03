@@ -75,13 +75,18 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run test:e2e
 ```
 
 `npm test` runs the offline suite and does not make paid provider calls. One real Redis integration
 test runs only when the two `LIMITS_KV_REST_API_*` variables are available. The root-level
 `test-*.mjs` files are manual provider probes and are intentionally excluded from `npm test`.
 
-Pushes to `main` and pull requests run all four checks in GitHub Actions. See
+`npm run test:e2e` runs browser tests against the production build (run `npm run build` first). It
+starts the app with paid processing switched off and mocks every `/api` response in the browser, so
+it never contacts a provider. Install its browser once with `npx playwright install chromium`.
+
+Pushes to `main` and pull requests run all five checks in GitHub Actions. See
 [continuous integration](docs/CONTINUOUS-INTEGRATION.md) for details.
 
 ## Deployment

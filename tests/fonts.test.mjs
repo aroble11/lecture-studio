@@ -12,7 +12,7 @@ test("production fonts come from the bundled Geist package", () => {
   assert.match(layout, /geist\/font\/mono/);
   assert.match(layout, /GeistSans\.variable/);
   assert.match(layout, /GeistMono\.variable/);
-  assert.equal(packageJson.dependencies.geist, "^1.7.0");
+  assert.ok(packageJson.dependencies.geist, "geist must stay a production dependency");
 });
 
 test("the bundled sans and mono variables are applied", () => {

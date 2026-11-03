@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { decodeToMono, formatTime, readAudioDurationMs, SAMPLE_RATE, transcribeLecture, TranscriptionError, type ChunkResults, type Turn } from "@/lib/audio-client";
-import type { DiagramContext, DiagramResult } from "@/lib/diagram";
+import type { DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
-import type { GenerateResult, LessonContext } from "@/lib/materials";
+import type { GenerateResult } from "@/lib/materials";
+import type { ResultSource } from "@/lib/session-store";
 import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
 import { createCompatibleMediaRecorder, RECORDING_LIMITS, recordingLimitMessage, recordingLimitReason, stopMediaRecorder, stopMediaStream, type RecordingLimitReason } from "@/lib/recording-lifecycle";
-import { clearSession, loadSession, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession, type ResultSource } from "@/lib/session-store";
+import { clearSession, loadSession, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession } from "@/lib/session-store";
+import { buildLessonContext, countWords, diagramContextFor, generateRequestBody, keywordKey, lectureTooLongMessage, parseVocabulary, restoredResultSource, resumableChunks, saveStatus, snapshotResultSource, transcriptionErrorMessage, type SaveState } from "@/lib/lecture-workflow";
 import MaterialsView from "./MaterialsView";
 import ProfileCard from "./ProfileCard";
 
@@ -31,11 +33,6 @@ type GenStatus =
   | { kind: "idle" }
   | { kind: "generating"; startedAt: number }
   | { kind: "error"; message: string };
-type SaveState =
-  | { kind: "idle" | "saving" | "saved" }
-  | { kind: "error"; message: string }
-  | { kind: "warning"; message: string }
-  | { kind: "too-large"; maxBytes: number };
 
 const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
 const uploadLabelClass = "cursor-pointer rounded-lg border border-zinc-300 font-medium hover:bg-zinc-100 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-blue-600 dark:border-zinc-700 dark:hover:bg-zinc-900";
@@ -123,16 +120,7 @@ export default function LectureCapture() {
         setTurns(saved.turns);
         setDurationMs(saved.durationMs);
         setResult(saved.result);
-        setResultSource(saved.result ? (saved.resultSource ?? {
-          turns: saved.turns,
-          durationMs: saved.durationMs,
-          context: {
-            ...saved.lesson,
-            vocabulary: saved.keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean),
-            style: prof?.style,
-            classNotes: prof?.classNotes,
-          },
-        }) : null);
+        setResultSource(restoredResultSource(saved, prof));
         setResultDiagram(saved.resultDiagram);
         setPrivacy(saved.privacy ?? false);
         if (saved.refImage) {
@@ -274,15 +262,13 @@ export default function LectureCapture() {
     setStatus({ kind: "idle" });
   }
 
-  const vocabulary = () => keywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-
   /** Wonder names the objects in the image, SAM 3.1 boxes them. Runs as soon as an image is added. */
   function analyzeImage(img: RefImage) {
     imageOps.current.invalidate();
     const ticket = imageOps.current.begin();
     setDiagram(null);
     setImageStatus({ kind: "analyzing" });
-    const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
+    const context = buildLessonContext(lesson, keywords, profile);
     const promise = (async () => {
       try {
         const res = await fetch("/api/label", {
@@ -343,25 +329,18 @@ export default function LectureCapture() {
     setGenElapsed(0);
     const tick = setInterval(() => setGenElapsed(Date.now() - startedAt), 1000);
     try {
-      const context: LessonContext = { ...lesson, vocabulary: vocabulary(), style: profile?.style, classNotes: profile?.classNotes };
-      const source: ResultSource = {
-        turns: turns.map((turn) => ({ ...turn })),
-        durationMs,
-        context: { ...context, vocabulary: context.vocabulary ? [...context.vocabulary] : undefined },
-      };
+      const source = snapshotResultSource(turns, durationMs, buildLessonContext(lesson, keywords, profile));
       const usePrivacy = privacy;
       // If the reference image is still being analyzed, wait for it so its labels shape the materials.
       const pending = labelRef.current;
       const labeled = pending ? await pending.promise : null;
       if (!lectureOps.current.isCurrent(ticket)) return;
       const img = pending?.image ?? null;
-      const diagramContext: DiagramContext | undefined = labeled?.items.length
-        ? { summary: labeled.summary, items: labeled.items.map(({ n, label }) => ({ n, label })) }
-        : undefined;
+      const diagramContext = diagramContextFor(labeled);
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turns: source.turns, context: source.context, diagram: diagramContext, ...(usePrivacy ? { privacy: true } : {}) }),
+        body: JSON.stringify(generateRequestBody(source, diagramContext, usePrivacy)),
         signal: ticket.controller.signal,
       });
       const data = await res.json().catch(() => null);
@@ -481,25 +460,21 @@ export default function LectureCapture() {
     if (!audio) return;
     const ticket = lectureOps.current.begin();
     const sourceAudio = audio;
-    const keywordList = vocabulary();
-    const keywordKey = keywordList.join("\n");
-    const kept = partialTranscript.current;
-    const resume = kept?.audio === sourceAudio && kept.keywords === keywordKey ? kept.results : undefined;
+    const keywordList = parseVocabulary(keywords);
+    const resume = resumableChunks(partialTranscript.current, sourceAudio, keywordList);
     if (!resume) partialTranscript.current = null;
     const started = Date.now();
     try {
       setStatus({ kind: "decoding" });
       const metadataDurationMs = await readAudioDurationMs(sourceAudio.blob);
       if (!lectureOps.current.isCurrent(ticket)) return;
-      if (metadataDurationMs !== null && metadataDurationMs > MAX_MINUTES * 60_000) {
-        throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(metadataDurationMs)}.`);
-      }
+      const metadataTooLong = metadataDurationMs === null ? null : lectureTooLongMessage(metadataDurationMs, MAX_MINUTES, formatTime);
+      if (metadataTooLong) throw new Error(metadataTooLong);
       const samples = await decodeToMono(sourceAudio.blob);
       if (!lectureOps.current.isCurrent(ticket)) return;
       const ms = (samples.length / SAMPLE_RATE) * 1000;
-      if (ms > MAX_MINUTES * 60_000) {
-        throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(ms)}.`);
-      }
+      const tooLong = lectureTooLongMessage(ms, MAX_MINUTES, formatTime);
+      if (tooLong) throw new Error(tooLong);
       setDurationMs(ms);
       const transcript = await transcribeLecture(samples, keywordList, {
         onProgress: (p) => { if (lectureOps.current.isCurrent(ticket)) setStatus({ kind: "transcribing", ...p }); },
@@ -514,27 +489,18 @@ export default function LectureCapture() {
       setStatus({ kind: "done", seconds: (Date.now() - started) / 1000 });
     } catch (err) {
       if (!lectureOps.current.isCurrent(ticket)) return;
-      let message =
-        err instanceof DOMException && err.name === "EncodingError"
-          ? "This browser couldn't read that audio file. Try m4a, mp3, or wav."
-          : err instanceof Error ? err.message : "Something went wrong.";
-      if (err instanceof TranscriptionError) {
-        const finished = err.partial.filter(Boolean).length;
-        if (finished > 0) {
-          partialTranscript.current = { audio: sourceAudio, keywords: keywordKey, results: err.partial };
-          message += ` ${finished} of ${err.partial.length} sections are already done and kept — select Transcribe lecture to finish the rest.`;
-        }
+      const partial = err instanceof TranscriptionError ? err.partial : undefined;
+      if (partial?.some(Boolean)) {
+        partialTranscript.current = { audio: sourceAudio, keywords: keywordKey(keywordList), results: partial };
       }
-      setStatus({ kind: "error", message });
+      setStatus({ kind: "error", message: transcriptionErrorMessage(err, partial) });
     } finally {
       lectureOps.current.finish(ticket);
     }
   }
 
-  const words = turns.reduce((n, t) => n + t.text.split(/\s+/).filter(Boolean).length, 0);
-  const saveError = sessionSave.kind === "error" ? sessionSave.message : audioSave.kind === "error" ? audioSave.message : null;
-  const saveWarning = audioSave.kind === "warning" ? audioSave.message : null;
-  const saving = sessionSave.kind === "saving" || audioSave.kind === "saving";
+  const words = countWords(turns);
+  const save = saveStatus(sessionSave, audioSave, audio?.blob.size ?? 0);
 
   return (
     <section className="flex flex-col gap-6">
@@ -542,18 +508,10 @@ export default function LectureCapture() {
       {restored && (
         <div
           role="status"
-          className={`-mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${saveError || saveWarning || audioSave.kind === "too-large" ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400"}`}
+          className={`-mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${save.attention ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400"}`}
         >
-          <span>
-            {saveError ? saveError : saveWarning ? saveWarning : saving ? (
-              audioSave.kind === "too-large"
-                ? `Saving lecture details… The audio exceeds the ${Math.round(audioSave.maxBytes / (1024 * 1024))} MB browser-save limit and will not survive a refresh.`
-                : "Saving this lecture in your browser…"
-            ) : audioSave.kind === "too-large" ? (
-              <>Lecture details are saved, but this {((audio?.blob.size ?? 0) / (1024 * 1024)).toFixed(1)} MB audio exceeds the {Math.round(audioSave.maxBytes / (1024 * 1024))} MB browser-save limit. It will not survive a refresh.</>
-            ) : "Saved in this browser."}
-          </span>
-          {saveError && (
+          <span>{save.message}</span>
+          {save.retry && (
             <button onClick={() => { setPersistenceEnabled(true); setSaveRetry((n) => n + 1); }} className="font-medium underline">
               Retry save
             </button>

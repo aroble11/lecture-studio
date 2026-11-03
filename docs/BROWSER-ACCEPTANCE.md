@@ -21,5 +21,6 @@ focus. The remediation keeps each native file input visually minimized but focus
 explicit label with `htmlFor`, and shows a visible focus outline on the corresponding control. The
 reference-image input is also associated with its explanatory text.
 
-`tests/accessibility.test.mjs` prevents the file inputs from returning to `className="hidden"` and
-requires the accessible names, descriptions, and focus-visible styling.
+The browser test in `e2e/lecture-flow.spec.mjs` checks the rendered page in Chromium: both file
+inputs keep their accessible names, the reference-image input keeps its description, and keyboard
+Tab navigation reaches both controls.
