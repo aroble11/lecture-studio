@@ -38,5 +38,5 @@ export async function POST(request: Request) {
       console.error("[label]", err);
       return Response.json({ error: "Analyzing the image failed — try again" }, { status: 502 });
     }
-  });
+  }, request);
 }

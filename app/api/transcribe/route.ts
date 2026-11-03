@@ -39,5 +39,5 @@ export async function POST(request: Request) {
       console.error("[transcribe]", err);
       return Response.json({ error: "Transcription failed — try again" }, { status: 502 });
     }
-  });
+  }, request);
 }

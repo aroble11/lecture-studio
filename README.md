@@ -60,8 +60,10 @@ counters separate. It should not be added manually for normal deployments.
 5. **Browser persistence:** the current lecture and teacher profile are stored locally in the browser.
    Audio up to 100 MB may be stored in IndexedDB; other session data uses browser storage. **Start
    over** deletes the current lecture, while **Delete profile** removes the separate teacher profile.
-6. **Usage controls:** Upstash stores only shared counters and temporary concurrency leases. The app
-   does not put transcripts, images, profiles, or IP addresses in that database.
+6. **Usage controls:** Upstash stores only shared counters, per-visitor daily counters, and temporary
+   concurrency leases. Visitor counters are keyed by a daily-rotating keyed hash of the network
+   address (never the address itself) and expire within 48 hours. The app does not put transcripts,
+   images, profiles, or IP addresses in that database.
 
 See [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md), [paid processing controls](docs/PAID-PROCESSING.md),
 and [request limits](docs/REQUEST-LIMITS.md) for the exact boundaries and failure behavior.

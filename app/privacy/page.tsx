@@ -32,6 +32,13 @@ export default function PrivacyPage() {
         </section>
 
         <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+          <h2 className="text-xl font-semibold">Usage limits on the server</h2>
+          <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+            <p>To share the demo fairly, the server counts how many transcription, labeling, and generation requests come from each network address per day. It stores only a one-way coded form of the address that changes every day, never the address itself, and the counts expire within 48 hours. No lecture content is stored with them.</p>
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
           <h2 className="text-xl font-semibold">What is saved in this browser</h2>
           <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
             <p>The current lecture can be stored in this browser&apos;s IndexedDB: audio up to 100 MB, transcript, lesson details, reference image and labels, generated materials, and the selected generation option.</p>

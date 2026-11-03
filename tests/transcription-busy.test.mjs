@@ -91,6 +91,16 @@ test("a daily-allowance 429 is final and is not retried", async () => {
   assert.equal(calls, 1);
 });
 
+test("a per-visitor allowance 429 is final and is not retried", async () => {
+  let calls = 0;
+  const { transcribeLecture, SAMPLE_RATE } = client(async () => {
+    calls++;
+    return Response.json({ reason: "visitor", error: "Your network reached today's allowance." }, { status: 429, headers: { "Retry-After": "3600" } });
+  });
+  await assert.rejects(() => transcribeLecture(lecture(SAMPLE_RATE), [], { concurrency: 1 }), /Your network reached/);
+  assert.equal(calls, 1);
+});
+
 test("a service that stays busy gives up with a clear message and keeps finished chunks", async () => {
   let calls = 0;
   const audio = client(async () => (++calls === 1 ? ok("first") : busy()), { busyGiveUpMs: 300 });

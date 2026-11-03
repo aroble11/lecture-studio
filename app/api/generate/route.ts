@@ -47,5 +47,5 @@ export async function POST(request: Request) {
       console.error("[generate]", err);
       return Response.json({ error: "Generating materials failed — try again" }, { status: 502 });
     }
-  });
+  }, request);
 }

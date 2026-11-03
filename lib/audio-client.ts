@@ -128,7 +128,7 @@ function toPcm16(samples: Float32Array, chunk: Chunk): ArrayBuffer {
 }
 
 /** A 429 worth waiting out: the shared transcription slots are full, or the firewall's per-IP
- *  window is spent. A daily-allowance 429 is final and stays an ordinary Error. */
+ *  window is spent. Daily-allowance 429s (site-wide or per visitor) are final ordinary Errors. */
 class BusyError extends Error {
   retryAfterMs: number | null;
   constructor(retryAfterMs: number | null) {
@@ -183,8 +183,11 @@ async function transcribeChunk(pcm: ArrayBuffer, keywords: string[], signal?: Ab
       if (res.ok) return ((await res.json()) as { turns: Turn[] }).turns;
       if (res.status === 429) {
         // The app's 429s name a reason; a firewall 429 does not and is treated as busy.
+        // Any other named reason ("daily", "visitor") is final.
         const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: string };
-        if (body.reason === "daily") throw new Error(body.error ?? "Today's transcription allowance has been reached.");
+        if (body.reason !== undefined && body.reason !== "busy") {
+          throw new Error(body.error ?? "Today's transcription allowance has been reached.");
+        }
         throw new BusyError(retryAfterMs(res));
       }
       // Client errors won't fix themselves; server/upstream errors get one retry within the same total deadline.

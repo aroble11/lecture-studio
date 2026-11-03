@@ -16,7 +16,7 @@ explicit budgets that fit the server routes.
   seconds, plus jitter), and one parallel worker is dropped per busy response until 30 seconds pass
   without one. A pause ends early as soon as another chunk finishes, since that frees a slot.
   Waiting does not count against the 100-second chunk deadline. Transcription gives up
-  only after 3 minutes with no finished chunk. A 429 whose `reason` is `daily` stays final.
+  only after 3 minutes with no finished chunk. A 429 whose `reason` is `daily` or `visitor` stays final.
 - When transcription stops early, finished chunks are kept in memory. Retrying the same audio with
   the same keywords sends only the missing chunks, which avoids re-billing finished work. Changing
   the audio or keywords, or refreshing the page, starts fresh.

@@ -21,25 +21,33 @@ The server uses Upstash Redis via `LIMITS_KV_REST_API_URL` and `LIMITS_KV_REST_A
 Use the write-capable REST token, not the read-only token or Redis connection URL.
 Keep credentials server-side and out of Git. No transcripts, images, IPs, or profiles are stored here.
 
-| Operation | Shared daily allowance | Active requests | Abandoned slot expiry |
-| --- | --- | --- | --- |
-| Transcription | 600 chunks | 12 | 150 seconds |
-| Generation (Meta + Baseten combined) | 40 | 2 | 330 seconds |
-| Image labeling (includes SAM fan-out) | 40 images | 2 | 90 seconds |
+| Operation | Shared daily allowance | Per-visitor daily | Active requests | Abandoned slot expiry |
+| --- | --- | --- | --- | --- |
+| Transcription | 600 chunks | 150 chunks | 12 | 150 seconds |
+| Generation (Meta + Baseten combined) | 40 | 8 | 2 | 330 seconds |
+| Image labeling (includes SAM fan-out) | 40 images | 8 images | 2 | 90 seconds |
 
 These are conservative demo defaults in `lib/usage-budget.ts`, not dollar budgets. Provider
 retries/fallbacks can make several calls per admitted request. Provider spend caps remain a
 separate financial backstop. Twelve transcription slots allow two six-chunk bursts.
 
-Allowances are site-wide, not per visitor. They reset at midnight UTC. Production and preview
+Site-wide allowances are shared by everyone. Each visitor also has a smaller daily share, so one
+visitor cannot use up the day for others; a visitor at its limit gets 429 with reason `visitor`
+before any site allowance or slot is used. A visitor is a network address as reported by Vercel's
+`x-real-ip` header, which Vercel overwrites so it cannot be spoofed. Visitors behind one shared
+address (for example, a school network) share one allowance. The address is never stored: the key
+is an HMAC of the address and the UTC day, keyed from the Upstash token, so it rotates daily and
+expires within 48 hours. Local development has no such header, so all local requests share one
+visitor allowance. Allowances reset at midnight UTC. Production and preview
 have separate counters; all deployments within each environment share counters. Local runs
 use development counters. Daily allowance is reserved before provider work and is not refunded
 on failures, since the provider may have billed them. Invalid input is rejected before admission.
 Request size and field validation are documented in `REQUEST-LIMITS.md` and `INPUT-VALIDATION.md`.
 
 A single atomic Redis script checks quota and active leases, then reserves both. Exhaustion
-returns 429 with `Retry-After` and a `reason` of `daily` or `busy`; the browser waits out
-`busy` transcription responses and treats `daily` as final (see `OPERATION-TIMEOUTS.md`). Missing credentials, store failures, timeouts, or unexpected
+returns 429 with `Retry-After` and a `reason` of `daily`, `visitor`, or `busy`; the browser waits
+out `busy` transcription responses and treats the other reasons as final (see
+`OPERATION-TIMEOUTS.md`). Missing credentials, store failures, timeouts, or unexpected
 responses return 503 and do not start provider work. Admissions are not retried automatically.
 An ambiguous timeout can conservatively consume quota/a slot until expiry.
 

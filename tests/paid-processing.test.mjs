@@ -138,8 +138,9 @@ for (const [route, headers, body] of cases) {
   test(`${route}: budget denial prevents provider work`, async () => {
     let checked = false;
     const POST = load(`app/api/${route}/route.ts`, { META_API_KEY: "test-only" }, {
-      "@/lib/usage-budget": { withUsageBudget: async (operation) => {
+      "@/lib/usage-budget": { withUsageBudget: async (operation, _work, request) => {
         assert.equal(operation, route);
+        assert.equal(request instanceof Request, true, "route must pass the request for per-visitor limits");
         checked = true;
         return Response.json({ error: "Allowance exhausted" }, { status: 429 });
       } },
