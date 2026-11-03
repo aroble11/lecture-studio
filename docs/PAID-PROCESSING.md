@@ -24,7 +24,7 @@ Keep credentials server-side and out of Git. No transcripts, images, IPs, or pro
 | Operation | Shared daily allowance | Per-visitor daily | Active requests | Abandoned slot expiry |
 | --- | --- | --- | --- | --- |
 | Transcription | 600 chunks | 150 chunks | 12 | 150 seconds |
-| Generation (Meta + Baseten combined) | 40 | 8 | 2 | 330 seconds |
+| Generation (Meta + Baseten combined) | 120 | 24 | 2 | 330 seconds |
 | Image labeling (includes SAM fan-out) | 120 images | 24 images | 2 | 90 seconds |
 
 These are conservative demo defaults in `lib/usage-budget.ts`, not dollar budgets. Provider

@@ -8,7 +8,7 @@ import { createHmac, randomUUID } from "node:crypto";
 export const USAGE_BUDGETS = {
   // 150 chunks is roughly two 90-minute lectures.
   transcribe: { daily: 600, perVisitor: 150, concurrent: 12, leaseSeconds: 150 },
-  generate: { daily: 40, perVisitor: 8, concurrent: 2, leaseSeconds: 330 },
+  generate: { daily: 120, perVisitor: 24, concurrent: 2, leaseSeconds: 330 },
   label: { daily: 120, perVisitor: 24, concurrent: 2, leaseSeconds: 90 },
 } as const;
 type Operation = keyof typeof USAGE_BUDGETS;
