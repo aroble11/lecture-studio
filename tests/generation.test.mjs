@@ -122,7 +122,6 @@ test("validator rejects malformed, incomplete, oversized, or ambiguous materials
     (m) => { m.quiz[0].choices.length = 3; },
     (m) => { m.quiz[0].answerIndex = 4; },
     (m) => { m.quiz[0].choices[1] = m.quiz[0].choices[0].toUpperCase(); },
-    (m) => { m.quiz[1].choices[1] = m.quiz[0].choices[1]; },
     (m) => { m.exitTicket = []; },
     (m) => { m.pacingFeedback = []; },
     (m) => { m.bellRinger.prompt = "x".repeat(4001); },
@@ -132,6 +131,121 @@ test("validator rejects malformed, incomplete, oversized, or ambiguous materials
     mutate(value);
     assert.throws(() => validateMaterials(value, turns, undefined, true), /Invalid generated materials/);
   }
+});
+
+test("a choice may repeat across different quiz questions", () => {
+  const { validateMaterials } = loader().load("lib/materials-validation.ts");
+  const value = materials();
+  value.quiz[1].choices[1] = value.quiz[0].choices[1];
+  assert.doesNotThrow(() => validateMaterials(value, turns, undefined, true));
+});
+
+const longTurns = [...turns, { startMs: 60_000, endMs: 90_000, text: "Checks and balances limit each branch." }];
+function noteItem(answer, text = `_____ is a key idea about ${answer.toLowerCase()}.`) {
+  return { text, answer };
+}
+
+test("repair trims surplus entries, fixes timestamps and blanks, and drops unusable items without content in its log", () => {
+  const { repairMaterials, validateMaterials } = loader().load("lib/materials-validation.ts");
+  const value = materials({ diagram: [{ n: 1, note: "The nucleus stores DNA." }, { n: 9, note: "Unexpected." }, { n: 1, note: "Duplicate." }] });
+  const diagram = { summary: "A cell", items: [{ n: 1, label: "Nucleus" }] };
+  value.guidedNotes.sections = [
+    { heading: "Late", startSec: 500, items: [noteItem("Federalism", "______ divides power.")] },
+    { heading: "Early", startSec: 10, items: [
+      noteItem("Federalism"),
+      noteItem("Branches", "_____ and _____ are both blanks."),
+      noteItem("Checks"),
+    ] },
+    { heading: "Only duplicates", startSec: 60, items: [noteItem("checks")] },
+  ];
+  value.quiz.push({ ...value.quiz[0], question: "Sixth?" });
+  value.exitTicket = [1, 2, 3].map((n) => ({ question: `Q${n}?`, sampleAnswer: `A${n}.` }));
+  value.pacingFeedback = ["a", "b", "c", "d"];
+  value.contentGaps = [1, 2, 3, 4, 5].map((n) => ({ concept: `C${n}`, atSec: n === 1 ? 999 : n, issue: "Missing.", suggestion: "Add it." }));
+
+  const { materials: repaired, repairs } = repairMaterials(value, longTurns, diagram);
+  const sections = repaired.guidedNotes.sections;
+  assert.deepEqual(sections.map((s) => s.heading), ["Late", "Early"]);
+  assert.deepEqual(sections.map((s) => s.startSec), [90, 90]);
+  assert.equal(sections[0].items[0].text, "_____ divides power.");
+  assert.deepEqual(sections[1].items.map((i) => i.answer), ["Checks"]);
+  assert.equal(repaired.quiz.length, 5);
+  assert.equal(repaired.exitTicket.length, 2);
+  assert.equal(repaired.pacingFeedback.length, 3);
+  assert.equal(repaired.contentGaps.length, 4);
+  assert.equal(repaired.contentGaps[0].atSec, 90);
+  assert.deepEqual(repaired.diagramNotes.map((n) => n.n), [1]);
+  assert.doesNotThrow(() => validateMaterials(repaired, longTurns, diagram));
+  for (const rule of ["section timestamp clamped", "section timestamp reordered", "blank standardized",
+    "note item with several blanks dropped", "duplicate note answer dropped", "empty note section dropped",
+    "surplus quiz questions trimmed", "surplus exit tickets trimmed", "surplus pacing feedback trimmed",
+    "surplus content gaps trimmed", "content gap timestamp clamped", "unexpected diagram note dropped"]) {
+    assert.equal(repairs.includes(rule), true, rule);
+  }
+  assert.doesNotMatch(repairs.join(" "), /Federalism|Checks|nucleus/i);
+});
+
+test("repair never invents missing content: short quizzes and missing diagram notes stay invalid", () => {
+  const { repairMaterials, validateMaterials } = loader().load("lib/materials-validation.ts");
+  const diagram = { summary: "A cell", items: [{ n: 1, label: "Nucleus" }, { n: 2, label: "Membrane" }] };
+  const shortQuiz = materials({ diagram: [{ n: 1, note: "One." }, { n: 2, note: "Two." }] });
+  shortQuiz.quiz.length = 4;
+  assert.throws(() => validateMaterials(repairMaterials(shortQuiz, turns, diagram).materials, turns, diagram), /quiz/);
+  const missingNote = materials({ diagram: [{ n: 1, note: "One." }] });
+  assert.throws(() => validateMaterials(repairMaterials(missingNote, turns, diagram).materials, turns, diagram), /diagramNotes/);
+  const noUsableNotes = materials();
+  noUsableNotes.guidedNotes.sections[0].items[0].text = "_____ and _____";
+  assert.throws(() => validateMaterials(repairMaterials(noUsableNotes, turns).materials, turns), /guidedNotes.sections/);
+  assert.throws(() => repairMaterials({ ...materials(), extra: true }, turns), /unexpected field/);
+});
+
+test("repairable output is accepted on the first call without spending the fallback", async () => {
+  const value = materials();
+  value.guidedNotes.sections[0].items.push(noteItem("federalism"), noteItem("Separation of powers", "Power is split three ways."));
+  value.quiz[1].choices[1] = value.quiz[0].choices[1];
+  const { load, calls } = loader({ responses: [response(value)] });
+  const result = await load("lib/generate.ts").generateMaterials(turns, {}, { apiKey: "test" });
+  assert.equal(calls.responses.length, 1);
+  assert.deepEqual([...result.materials.guidedNotes.sections[0].items.map((i) => i.answer)], ["Federalism"]);
+});
+
+async function withCapturedLogs(run) {
+  const lines = [];
+  const original = { warn: console.warn, info: console.info };
+  console.warn = (...args) => lines.push(args.map(String).join(" "));
+  console.info = (...args) => lines.push(args.map(String).join(" "));
+  try { await run(); } finally { Object.assign(console, original); }
+  return lines;
+}
+
+test("a rejected attempt tells the retry which rule failed and logs only the rule", async () => {
+  const bad = materials();
+  bad.quiz.length = 4;
+  const { load, calls } = loader({ responses: [response(bad), response(materials())] });
+  const lines = await withCapturedLogs(() => load("lib/generate.ts").generateMaterials(turns, {}, { apiKey: "test" }));
+  assert.equal(calls.responses.length, 2);
+  assert.doesNotMatch(calls.responses[0].input, /previous attempt/);
+  assert.match(calls.responses[1].input, /previous attempt was rejected by validation \(quiz: expected 5–5 entries\)/);
+  assert.match(calls.responses[1].input, /Transcript:/);
+  const log = lines.join("\n");
+  assert.match(log, /invalid output \(quiz: expected 5–5 entries\)/);
+  assert.doesNotMatch(log, /Constitution|Federalism|Question 1/);
+});
+
+test("open-weight retries also receive the failed rule", async () => {
+  const bad = materials();
+  bad.exitTicket = [];
+  const { load, calls } = loader({ chats: [chat(bad), chat(materials())] });
+  await withCapturedLogs(() => load("lib/generate.ts").generatePrivately(turns, {}, { apiKey: "test" }));
+  assert.equal(calls.chats.length, 2);
+  assert.match(calls.chats[1].messages[1].content, /rejected by validation \(exitTicket: expected 1–2 entries\)/);
+});
+
+test("network failures are retried without validation feedback", async () => {
+  const { load, calls } = loader({ responses: [new Error("socket hang up"), response(materials())] });
+  await withCapturedLogs(() => load("lib/generate.ts").generateMaterials(turns, {}, { apiKey: "test" }));
+  assert.equal(calls.responses.length, 2);
+  assert.doesNotMatch(calls.responses[1].input, /previous attempt/);
 });
 
 test("validator requires every expected diagram note exactly once", () => {

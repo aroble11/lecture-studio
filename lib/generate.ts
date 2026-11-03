@@ -5,7 +5,7 @@ import { GENERATION, MODELS, PRIVACY } from "./config";
 import type { DiagramContext } from "./diagram";
 import type { Turn } from "./meta-asr";
 import { MATERIALS_SCHEMA, type GenerateResult, type LessonContext, type Materials } from "./materials";
-import { parseGeneratedJson, validateMaterials } from "./materials-validation";
+import { InvalidMaterialsError, parseGeneratedJson, repairMaterials, validateMaterials } from "./materials-validation";
 
 export const BLANK = "_____";
 
@@ -94,9 +94,9 @@ function findWholePhrase(text: string, phrase: string) {
 }
 
 /** Cleanup only after the untrusted provider response passes validation. */
-function normalize(m: Materials): Materials {
+function normalize(m: Materials, repairs: string[]): Materials {
   for (const s of m.guidedNotes.sections) {
-    for (const it of s.items) {
+    s.items = s.items.filter((it) => {
       if (it.text.includes(BLANK)) {
         // "the Federalist _____" + answer "Federalist Papers" → "the _____" (the answer already holds those words)
         const words = it.answer.trim().split(/\s+/);
@@ -109,13 +109,20 @@ function normalize(m: Materials): Materials {
             break;
           }
         }
-        continue;
+        return true;
       }
       const i = findWholePhrase(it.text, it.answer);
-      if (i < 0) throw new Error("Invalid generated materials: guided note answer is absent from its sentence");
+      if (i < 0) {
+        // Ungrounded: the answer is not in its sentence, so no blank can be made. Drop just this item.
+        if (!repairs.includes("ungrounded note item dropped")) repairs.push("ungrounded note item dropped");
+        return false;
+      }
       it.text = it.text.slice(0, i) + BLANK + it.text.slice(i + it.answer.length);
-    }
+      return true;
+    });
   }
+  m.guidedNotes.sections = m.guidedNotes.sections.filter((s) => s.items.length);
+  if (!m.guidedNotes.sections.length) throw new InvalidMaterialsError("guided note answer is absent from its sentence");
   // Keep the word bank honest: exactly the answers that are still in the notes, no extras.
   if (m.guidedNotes.wordBank.length) {
     const answers = m.guidedNotes.sections.flatMap((s) => s.items.map((it) => it.answer.trim()));
@@ -152,10 +159,26 @@ function fixSectionTimes(m: Materials, turns: Turn[]) {
   }
 }
 
-function finish(raw: unknown, turns: Turn[], diagram?: DiagramContext): Materials {
-  const materials = normalize(validateMaterials(raw, turns, diagram));
+function finish(raw: unknown, turns: Turn[], diagram: DiagramContext | undefined, model: string): Materials {
+  const { materials: repaired, repairs } = repairMaterials(raw, turns, diagram);
+  const materials = normalize(validateMaterials(repaired, turns, diagram), repairs);
   fixSectionTimes(materials, turns);
-  return validateMaterials(materials, turns, diagram, true);
+  const final = validateMaterials(materials, turns, diagram, true);
+  // Rule names only, never content: shows how often each repair is needed.
+  if (repairs.length) console.info(`[generate] ${model} output repaired: ${repairs.join("; ")}`);
+  return final;
+}
+
+/** Log line for a failed attempt: the broken rule for invalid output, never generated content. */
+function failureReason(err: unknown): string {
+  if (err instanceof InvalidMaterialsError) return `invalid output (${err.rule})`;
+  return err instanceof Error ? err.message : "unknown error";
+}
+
+/** Retry input: when output broke a rule, tell the next attempt which one. */
+function withFeedback(input: string, err: unknown): string {
+  if (!(err instanceof InvalidMaterialsError)) return input;
+  return `${input}\n\nA previous attempt was rejected by validation (${err.rule}). Follow every rule in the instructions and return one complete JSON object.`;
 }
 
 async function callModel(client: OpenAI, model: string, input: string, turns: Turn[], signal?: AbortSignal, diagram?: DiagramContext): Promise<Materials> {
@@ -168,7 +191,7 @@ async function callModel(client: OpenAI, model: string, input: string, turns: Tu
     text: { format: { type: "json_schema", name: "materials", strict: true, schema: MATERIALS_SCHEMA } },
   }, { signal });
   if (res.status !== "completed") throw new Error(`${model} returned status ${res.status}`);
-  return finish(parseGeneratedJson(res.output_text), turns, diagram);
+  return finish(parseGeneratedJson(res.output_text), turns, diagram, model);
 }
 
 /** Open-weight generation call: Chat Completions on Baseten. Accept only a complete JSON object or one complete JSON fence. */
@@ -191,7 +214,7 @@ async function callOpenModel(client: OpenAI, input: string, turns: Turn[], signa
     throw new Error(`${PRIVACY.model} returned finish reason ${choice?.finish_reason ?? "missing"}`);
   }
   if (choice.message.refusal) throw new Error(`${PRIVACY.model} refused the request`);
-  return finish(parseGeneratedJson(choice.message.content), turns, diagram);
+  return finish(parseGeneratedJson(choice.message.content), turns, diagram, PRIVACY.model);
 }
 
 /** Open-weight generation: one retry on the same model, never Meta's generation API. */
@@ -213,8 +236,8 @@ export async function generatePrivately(
     materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-    console.warn(`[generate] ${PRIVACY.model} failed, retrying once (open-weight generation — no Meta fallback):`, err);
-    materials = await callOpenModel(client, input, turns, opts.signal, opts.diagram);
+    console.warn(`[generate] ${PRIVACY.model} failed: ${failureReason(err)}; retrying once (open-weight generation — no Meta fallback)`);
+    materials = await callOpenModel(client, withFeedback(input, err), turns, opts.signal, opts.diagram);
   }
   return { materials, model: PRIVACY.label, seconds: Math.round((Date.now() - t0) / 100) / 10, privacy: true };
 }
@@ -238,9 +261,9 @@ export async function generateMaterials(
     materials = await callModel(client, model, input, turns, opts.signal, opts.diagram);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-    console.warn(`[generate] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
+    console.warn(`[generate] ${model} failed: ${failureReason(err)}; falling back to ${MODELS.generationFallback}`);
     model = MODELS.generationFallback;
-    materials = await callModel(client, model, input, turns, opts.signal, opts.diagram);
+    materials = await callModel(client, model, withFeedback(input, err), turns, opts.signal, opts.diagram);
   }
   return { materials, model, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }

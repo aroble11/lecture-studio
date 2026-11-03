@@ -3,7 +3,19 @@ import type { DiagramContext } from "./diagram";
 import type { Turn } from "./meta-asr";
 
 type Schema = { type: string; properties?: Record<string, unknown>; required?: string[]; items?: unknown };
-function invalid(path: string): never { throw new Error(`Invalid generated materials: ${path}`); }
+
+/** Generated output broke a rule. `rule` names the rule or field path only — never content — so it
+ * is safe to log and to send back to the model as retry feedback. */
+export class InvalidMaterialsError extends Error {
+  rule: string;
+  constructor(rule: string) {
+    super(`Invalid generated materials: ${rule}`);
+    this.name = "InvalidMaterialsError";
+    this.rule = rule;
+  }
+}
+function invalid(path: string): never { throw new InvalidMaterialsError(path); }
+const BLANK = "_____";
 
 /** Use the same structural schema sent to providers; return a clean copy with trimmed strings.
  * Provider-side structured output is not a substitute for validating an untrusted response.
@@ -43,6 +55,61 @@ export function parseGeneratedJson(text: unknown): unknown {
   catch { return invalid("response JSON"); }
 }
 
+/** Fix recoverable deviations instead of discarding a whole paid generation. Structure, types and
+ * text bounds stay strict (checked first). This only trims surplus entries, clamps and orders
+ * timestamps, standardizes blanks, and drops individual note items or diagram notes that cannot be
+ * used; anything still wrong is left for validateMaterials to reject. Returns the repairs made as
+ * rule names (never content) so callers can log how often each happens. */
+export function repairMaterials(value: unknown, turns: Turn[], diagram?: DiagramContext): { materials: Materials; repairs: string[] } {
+  const m = check(MATERIALS_SCHEMA, value, "materials") as Materials;
+  const repairs: string[] = [];
+  const note = (rule: string) => { if (!repairs.includes(rule)) repairs.push(rule); };
+  const trim = <T>(items: T[], max: number, rule: string): T[] => {
+    if (items.length <= max) return items;
+    note(rule);
+    return items.slice(0, max);
+  };
+  const endSec = Math.ceil(Math.max(0, ...turns.map((t) => t.endMs)) / 1000);
+  const clamp = (n: number, rule: string) => {
+    const fixed = Math.min(endSec, Math.max(0, n));
+    if (fixed !== n) note(rule);
+    return fixed;
+  };
+
+  const answers = new Set<string>();
+  let previous = 0;
+  for (const s of m.guidedNotes.sections) {
+    s.startSec = clamp(s.startSec, "section timestamp clamped");
+    if (s.startSec < previous) { s.startSec = previous; note("section timestamp reordered"); }
+    previous = s.startSec;
+    s.items = trim(s.items.filter((item) => {
+      const blanks = item.text.match(/_{3,}/g) ?? [];
+      if (blanks.length > 1) { note("note item with several blanks dropped"); return false; }
+      if (blanks.length === 1 && blanks[0] !== BLANK) { item.text = item.text.replace(/_{3,}/, BLANK); note("blank standardized"); }
+      const key = canonical(item.answer);
+      if (answers.has(key)) { note("duplicate note answer dropped"); return false; }
+      answers.add(key);
+      return true;
+    }), 6, "surplus note items trimmed");
+  }
+  const sections = m.guidedNotes.sections.filter((s) => s.items.length);
+  if (sections.length !== m.guidedNotes.sections.length) note("empty note section dropped");
+  m.guidedNotes.sections = trim(sections, 6, "surplus note sections trimmed");
+  m.guidedNotes.wordBank = trim(m.guidedNotes.wordBank, 36, "surplus word bank entries trimmed");
+  m.quiz = trim(m.quiz, 5, "surplus quiz questions trimmed");
+  m.exitTicket = trim(m.exitTicket, 2, "surplus exit tickets trimmed");
+  m.pacingFeedback = trim(m.pacingFeedback, 3, "surplus pacing feedback trimmed");
+  m.contentGaps = trim(m.contentGaps, 4, "surplus content gaps trimmed");
+  for (const gap of m.contentGaps) gap.atSec = clamp(gap.atSec, "content gap timestamp clamped");
+
+  const expected = new Set(diagram?.items.map((i) => i.n) ?? []);
+  const kept = new Set<number>();
+  const notes = m.diagramNotes.filter((n) => expected.has(n.n) && !kept.has(n.n) && kept.add(n.n));
+  if (notes.length !== m.diagramNotes.length) note("unexpected diagram note dropped");
+  m.diagramNotes = notes;
+  return { materials: m, repairs };
+}
+
 /** Both providers pass this before cleanup and again after cleanup/timestamp correction. */
 export function validateMaterials(value: unknown, turns: Turn[], diagram?: DiagramContext, final = false): Materials {
   const m = check(MATERIALS_SCHEMA, value, "materials") as Materials;
@@ -75,14 +142,12 @@ export function validateMaterials(value: unknown, turns: Turn[], diagram?: Diagr
     invalid("wordBank answers");
   }
   count(m.quiz, 5, 5, "quiz");
-  const quizChoices: string[] = [];
+  // A choice may repeat across questions (for example "True" or a year); only within one question is it ambiguous.
   for (const q of m.quiz) {
     count(q.choices, 4, 4, "quiz choices");
     if (q.answerIndex < 0 || q.answerIndex >= q.choices.length) invalid("quiz answerIndex");
     if (new Set(q.choices.map(canonical)).size !== 4) invalid("duplicate quiz choices");
-    quizChoices.push(...q.choices.map(canonical));
   }
-  if (new Set(quizChoices).size !== quizChoices.length) invalid("quiz choice reused across questions");
   count(m.exitTicket, 1, 2, "exitTicket");
   count(m.pacingFeedback, 1, 3, "pacingFeedback");
   count(m.contentGaps, 0, 4, "contentGaps");
