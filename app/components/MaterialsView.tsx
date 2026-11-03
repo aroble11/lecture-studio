@@ -27,7 +27,10 @@ export default function MaterialsView({
   outdated = false,
   onBoardItemsChange,
   onDiagramItemsChange,
+  onPrint,
 }: {
+  /** Print (or save as PDF) the student handout or the teacher's answer-key copy. */
+  onPrint?: (copy: "student" | "teacher") => void;
   /** The transcript was edited after these materials were made. */
   outdated?: boolean;
   /** Teacher moved or renamed the numbered labels on a whiteboard drawing. */
@@ -101,15 +104,29 @@ export default function MaterialsView({
 
   return (
     <section className="flex flex-col gap-5 rounded-3xl border border-line bg-surface p-5 sm:p-7">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-        <h2 className="text-2xl font-extrabold">Your materials</h2>
-        <span className="flex flex-wrap items-center gap-2 text-sm text-subtle">
-          {result.privacy && (
-            <span className="rounded-full bg-ok-soft px-2.5 py-0.5 text-xs font-bold text-ok">Open-weight generation</span>
-          )}
-          {result.model} · {result.seconds.toFixed(0)} s
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div>
+          <h2 className="text-2xl font-extrabold">Your materials</h2>
+          <span className="flex flex-wrap items-center gap-2 text-sm text-subtle">
+            {result.privacy && (
+              <span className="rounded-full bg-ok-soft px-2.5 py-0.5 text-xs font-bold text-ok">Open-weight generation</span>
+            )}
+            {result.model} · {result.seconds.toFixed(0)} s
+          </span>
+        </div>
+        {onPrint && (
+          <div className="flex flex-wrap gap-2.5">
+            <button type="button" onClick={() => onPrint("student")} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand px-4 text-[15px] font-extrabold text-on-brand hover:bg-brand-dark">
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 9V3h10v6" /><rect x="3" y="9" width="18" height="8" rx="2" /><path d="M7 14h10v7H7z" /></svg>
+              Print student copy
+            </button>
+            <button type="button" onClick={() => onPrint("teacher")} className="inline-flex min-h-11 items-center rounded-xl border border-line-strong bg-surface px-4 text-[15px] font-extrabold text-ink hover:border-brand hover:text-brand">
+              Print teacher copy
+            </button>
+          </div>
+        )}
       </div>
+      {onPrint && <p className="-mt-2 text-sm text-subtle">To save a PDF instead, choose &quot;Save as PDF&quot; in the print window. For a clean page, turn off &quot;Headers and footers&quot; under More settings. The student copy never includes answers.</p>}
       <p className="flex items-center gap-2.5 rounded-2xl bg-sun-soft px-4 py-3 text-[15px] font-bold text-sun-ink">
         <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z" /></svg>
         Written by AI from your lecture — give it a quick read before class.
@@ -173,7 +190,7 @@ export default function MaterialsView({
                     );
                   })}
                 </ol>
-                {drawingsFor(i).map((b) => <BoardDrawing key={b.timeMs} moment={b} onItemsChange={onBoardItemsChange && ((items) => onBoardItemsChange(b.timeMs, items))} />)}
+                {drawingsFor(i).map((b) => <BoardDrawing key={b.timeMs} moment={b} answers={answers} wordBank={(m.guidedNotes.wordBank?.length ?? 0) > 0} onItemsChange={onBoardItemsChange && ((items) => onBoardItemsChange(b.timeMs, items))} />)}
               </div>
             ))}
           </div>
@@ -313,7 +330,7 @@ export default function MaterialsView({
 }
 
 /** A kept whiteboard drawing with its numbered labels, shown beside the matching notes. Labels can be edited. */
-function BoardDrawing({ moment, onItemsChange }: { moment: BoardMoment; onItemsChange?: (items: DiagramItem[]) => void }) {
+function BoardDrawing({ moment, answers, wordBank, onItemsChange }: { moment: BoardMoment; answers: boolean; wordBank: boolean; onItemsChange?: (items: DiagramItem[]) => void }) {
   const [editing, setEditing] = useState(false);
   const items = moment.diagram?.items ?? [];
   const alt = moment.diagram?.summary ?? "Whiteboard drawing";
@@ -328,12 +345,15 @@ function BoardDrawing({ moment, onItemsChange }: { moment: BoardMoment; onItemsC
     <figure className="mt-4 flex flex-col gap-3 rounded-2xl border border-line bg-tint-soft p-3 sm:flex-row sm:items-start">
       <MarkerImage src={moment.image.dataUrl} alt={alt} items={items} size="sm" className="w-full shrink-0 sm:w-[60%]" />
       <figcaption className="flex flex-col gap-2 text-[15px]">
-        <p className="font-bold">From the board at {formatTime(moment.timeMs)}</p>
-        <ol className="space-y-1">
+        <p className="font-bold">From the board at {formatTime(moment.timeMs)}{answers ? "" : " — label each number"}</p>
+        {!answers && wordBank && (
+          <p className="text-sm"><span className="font-bold">Word bank: </span>{items.map((d) => d.label).sort((a, b) => a.localeCompare(b)).join(" · ")}</p>
+        )}
+        <ol className={answers ? "space-y-1" : "space-y-2.5"}>
           {items.map((d) => (
-            <li key={d.n} className="flex gap-2">
+            <li key={d.n} className="flex items-center gap-2">
               <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-apple text-[11px] font-bold text-white">{d.n}</span>
-              {d.label}
+              {answers ? <span className="font-extrabold text-brand">{d.label}</span> : <span aria-label="blank" className="inline-block w-36 border-b-2 border-blank" />}
             </li>
           ))}
         </ol>

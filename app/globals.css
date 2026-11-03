@@ -127,3 +127,28 @@ body {
   color: var(--ink);
   font-family: var(--font-nunito), system-ui, Arial, Helvetica, sans-serif;
 }
+
+/* Printing (Print student copy / Print teacher copy): always the light palette on white paper, only the
+   handout, and keep the numbered-marker colors even when the browser drops background graphics. */
+@page {
+  margin: 0.6in;
+}
+
+@media print {
+  :root:root {
+    color-scheme: light;
+    --canvas: #ffffff;
+    --surface: #ffffff;
+    --ink: #000000;
+    --line: #c9cfdd;
+    --line-strong: #8a93aa;
+  }
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+  .print-root {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

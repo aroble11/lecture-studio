@@ -238,3 +238,43 @@ test("a teacher can edit the transcript; materials are flagged as outdated and e
   expect(calls.transcribe).toHaveLength(0);
   expect(calls.generate).toHaveLength(0);
 });
+
+test("printing makes a student copy without answers and a teacher copy with them", async ({ page }) => {
+  await mockApi(page);
+  await page.addInitScript(() => { window.__prints = 0; window.print = () => { window.__prints += 1; }; });
+  await page.route("**/sample/sample-lecture.json", (route) => route.fulfill({
+    json: {
+      format: "lecture-studio-sample", version: 1, title: "Federalism sample",
+      session: {
+        version: 1, keywords: "", lesson: { subject: "U.S. History", grade: "10", objective: "", standards: "" },
+        turns: [{ startMs: 0, endMs: 5_000, text: "Federalism divides power between levels of government." }],
+        durationMs: 5_000, refImage: null, diagram: null,
+        result: { materials, model: "test-model", seconds: 1 }, resultSource: null, resultDiagram: null, privacy: false,
+      },
+    },
+  }));
+  await page.goto("/");
+  await page.getByRole("button", { name: /Try a sample lecture/ }).click();
+  await expect(page.getByText("Federalism Guided Notes").first()).toBeVisible();
+  const printRoot = page.locator("#print-root");
+  const teacherOnly = ["Correct 1 is stated in the lecture.", "Give students three minutes.", "Between national and state governments.", "Teacher copy", "You spent most of the time on federalism."];
+
+  await page.getByRole("button", { name: "Print student copy" }).click();
+  await expect.poll(() => page.evaluate(() => window.__prints)).toBe(1);
+  await expect(printRoot).toHaveAttribute("data-copy", "student");
+  await page.emulateMedia({ media: "print" });
+  await expect(printRoot).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your materials" })).toBeHidden();
+  await expect(printRoot).toContainText("Question 1?");
+  await expect(printRoot).toContainText("Name");
+  for (const text of teacherOnly) await expect(printRoot).not.toContainText(text);
+  await expect(printRoot).not.toContainText("Federalism divides power", { useInnerText: true });
+
+  await page.emulateMedia({ media: "screen" });
+  await page.getByRole("button", { name: "Print teacher copy" }).click();
+  await expect.poll(() => page.evaluate(() => window.__prints)).toBe(2);
+  await expect(printRoot).toHaveAttribute("data-copy", "teacher");
+  await page.emulateMedia({ media: "print" });
+  for (const text of teacherOnly) await expect(printRoot).toContainText(text);
+  await expect(printRoot).toContainText("Federalism");
+});

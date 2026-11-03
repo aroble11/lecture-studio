@@ -16,6 +16,8 @@ import { clearSession, loadSession, MAX_BOARD_MOMENTS, MAX_SAVED_AUDIO_BYTES, sa
 import { applyTranscriptEdits, buildLessonContext, countWords, materialsOutdated, diagramContextFor, generateRequestBody, keywordKey, lectureTooLongMessage, parseVocabulary, restoredResultSource, resumableChunks, saveStatus, snapshotResultSource, transcriptionErrorMessage, type SaveState } from "@/lib/lecture-workflow";
 import BoardMoments, { type MomentCheck } from "./BoardMoments";
 import MaterialsView from "./MaterialsView";
+import PrintableMaterials from "./PrintableMaterials";
+import type { PrintCopy } from "@/lib/export-plan";
 import ProfileCard from "./ProfileCard";
 import ThemeSwitch from "./ThemeSwitch";
 
@@ -93,6 +95,7 @@ export default function LectureCapture() {
   const [sample, setSample] = useState<{ title: string } | null>(null);
   const [boardMoments, setBoardMoments] = useState<BoardMoment[]>([]);
   const [transcriptDrafts, setTranscriptDrafts] = useState<string[] | null>(null);
+  const [printRequest, setPrintRequest] = useState<{ copy: PrintCopy; id: number } | null>(null);
   const [momentChecks, setMomentChecks] = useState<Record<number, MomentCheck>>({});
   const [sampleStatus, setSampleStatus] = useState<{ kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string }>({ kind: "idle" });
   const sessionSaveAttempt = useRef(0);
@@ -154,6 +157,22 @@ export default function LectureCapture() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
+
+  // Print once the requested copy has rendered (the printable copy is hidden on screen).
+  // The page title names the saved PDF and the print header, so it says which handout this is while printing.
+  useEffect(() => {
+    if (!printRequest) return;
+    const timer = setTimeout(() => {
+      const previous = document.title;
+      const name = result?.materials.guidedNotes.title || "Lecture Studio";
+      document.title = `${name} — ${printRequest.copy === "student" ? "student copy" : "teacher copy"}`;
+      const restore = () => { document.title = previous; };
+      window.addEventListener("afterprint", restore, { once: true });
+      window.print();
+      setTimeout(restore, 1_000); // browsers that don't block on print() fire afterprint late or never
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [printRequest, result]);
 
   // Save after each change (debounced).
   useEffect(() => {
@@ -666,7 +685,7 @@ export default function LectureCapture() {
 
   return (
     <>
-      <header className="border-b border-line bg-surface">
+      <header className="border-b border-line bg-surface print:hidden">
         <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5 text-ink">
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#ffe8a3] text-apple">
@@ -688,7 +707,7 @@ export default function LectureCapture() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-7 px-4 pb-16 pt-10 sm:px-6">
+      <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-7 px-4 pb-16 pt-10 sm:px-6 print:hidden">
         {restored && save.attention && (
           <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sun-line bg-sun-soft px-4 py-3 text-[15px] font-semibold text-sun-ink">
             <span>{save.message}</span>
@@ -1057,8 +1076,21 @@ export default function LectureCapture() {
           outdated={materialsOutdated(turns, resultSource)}
           onBoardItemsChange={(timeMs, items) => setBoardMoments((list) => list.map((b) => (b.timeMs === timeMs && b.diagram ? { ...b, diagram: { ...b.diagram, items } } : b)))}
           onDiagramItemsChange={(items) => setResultDiagram((d) => (d ? { ...d, result: { ...d.result, items } } : d))}
+          onPrint={(copy) => setPrintRequest((r) => ({ copy, id: (r?.id ?? 0) + 1 }))}
         />}
       </main>
+
+      {result && printRequest && (
+        <PrintableMaterials
+          copy={printRequest.copy}
+          result={result}
+          lessonLine={[resultSource?.context.subject ?? lesson.subject, (resultSource?.context.grade ?? lesson.grade) && `Grade ${resultSource?.context.grade ?? lesson.grade}`].filter(Boolean).join(" · ")}
+          diagram={resultDiagram}
+          boardMoments={boardMoments}
+          turns={resultSource?.turns ?? turns}
+          durationMs={resultSource?.durationMs ?? durationMs}
+        />
+      )}
     </>
   );
 }
