@@ -25,7 +25,7 @@ Keep credentials server-side and out of Git. No transcripts, images, IPs, or pro
 | --- | --- | --- | --- | --- |
 | Transcription | 600 chunks | 150 chunks | 12 | 150 seconds |
 | Generation (Meta + Baseten combined) | 40 | 8 | 2 | 330 seconds |
-| Image labeling (includes SAM fan-out) | 40 images | 8 images | 2 | 90 seconds |
+| Image labeling (includes SAM fan-out) | 120 images | 24 images | 2 | 90 seconds |
 
 These are conservative demo defaults in `lib/usage-budget.ts`, not dollar budgets. Provider
 retries/fallbacks can make several calls per admitted request. Provider spend caps remain a

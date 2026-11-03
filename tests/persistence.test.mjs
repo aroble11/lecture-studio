@@ -207,3 +207,28 @@ test("profile deletion removes only the browser profile and reports blocked stor
   assert.equal(compiled.exports.clearProfile(), false);
   assert.equal(values.has("lecture-studio:profile"), true);
 });
+
+test("kept whiteboard moments are restored, and damaged ones are dropped with a warning", () => {
+  const { store } = loadSessionStore();
+  const image = { dataUrl: "data:image/jpeg;base64,AAAA", width: 1600, height: 900 };
+  const diagram = { kind: "objects", summary: "A place-value table.", items: [{ n: 1, label: "ones place", phrase: "ones column", box: { x1: 10, y1: 10, x2: 50, y2: 50 }, score: 0.9 }], model: "m", seconds: 3 };
+  const restored = store.validateSavedSession({ ...session(), boardMoments: [{ timeMs: 90_000, image, diagram }, { timeMs: 150_000, image, diagram: null }] });
+  assert.equal(restored.warning, undefined);
+  assert.equal(restored.session.boardMoments.length, 2);
+  assert.equal(restored.session.boardMoments[0].diagram.items[0].label, "ones place");
+  assert.equal(restored.session.boardMoments[1].diagram, null);
+  assert.equal("name" in restored.session.boardMoments[0].image, false);
+
+  const older = store.validateSavedSession(session());
+  assert.equal(older.session.boardMoments.length, 0, "saves from before this feature restore with none");
+
+  for (const bad of [
+    [{ timeMs: 150_000, image, diagram }, { timeMs: 90_000, image, diagram }],                  // out of order
+    [{ timeMs: 90_000, image: { ...image, dataUrl: "https://example.com/x.jpg" }, diagram }], // not a data URL
+    Array.from({ length: 5 }, (_, i) => ({ timeMs: i * 10_000, image, diagram: null })),     // over the cap
+  ]) {
+    const result = store.validateSavedSession({ ...session(), boardMoments: bad });
+    assert.equal(result.session.boardMoments.length, 0);
+    assert.match(result.warning, /whiteboard moments/);
+  }
+});

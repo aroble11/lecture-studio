@@ -11,6 +11,10 @@ export const MAX_SAVED_AUDIO_BYTES = 100 * 1024 * 1024;
 
 export type SavedAudio = { blob: Blob; label: string; /** Missing on legacy saves. */ revision?: string };
 export type ResultSource = { turns: Turn[]; durationMs: number; context: LessonContext };
+/** A whiteboard frame the teacher kept from a class video. `diagram` is null until labeling finishes (or if it failed). */
+export type BoardMoment = { timeMs: number; image: PreparedImage; diagram: DiagramResult | null };
+/** Most whiteboard moments a lecture keeps (each is one labeling request). */
+export const MAX_BOARD_MOMENTS = 4;
 
 export type SavedSession = {
   version: 1;
@@ -30,6 +34,8 @@ export type SavedSession = {
   resultDiagram: { image: string; result: DiagramResult } | null;
   /** Open-weight generation toggle (legacy property name retained for compatibility). */
   privacy?: boolean;
+  /** Whiteboard moments kept from a class video. Missing on older saves. */
+  boardMoments?: BoardMoment[];
 };
 
 const DB = "lecture-studio";
@@ -92,6 +98,19 @@ function cleanImage(value: unknown, field: string): PreparedImage & { name: stri
   const dataUrl = string(image.dataUrl, `${field}.dataUrl`, 4_000_000)!;
   if (!/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/]+=*$/i.test(dataUrl)) throw new Error(`${field}.dataUrl is invalid`);
   return { dataUrl, width: number(image.width, `${field}.width`, 1, 1600, true), height: number(image.height, `${field}.height`, 1, 1600, true), name: string(image.name, `${field}.name`, 300)! };
+}
+
+function cleanBoardMoments(value: unknown): BoardMoment[] {
+  let previous = -1;
+  return array(value, "boardMoments", MAX_BOARD_MOMENTS).map((entry, i) => {
+    const moment = record(entry, `boardMoments[${i}]`);
+    const timeMs = number(moment.timeMs, `boardMoments[${i}].timeMs`, 0, MAX_DURATION_MS);
+    if (timeMs <= previous) throw new Error("boardMoments is not ordered");
+    previous = timeMs;
+    const { name: _name, ...image } = cleanImage({ ...record(moment.image, `boardMoments[${i}].image`), name: "board" }, `boardMoments[${i}].image`);
+    void _name;
+    return { timeMs, image, diagram: moment.diagram === null || moment.diagram === undefined ? null : cleanDiagram(moment.diagram, `boardMoments[${i}].diagram`) };
+  });
 }
 
 function cleanDiagram(value: unknown, field: string): DiagramResult {
@@ -208,11 +227,12 @@ export function validateSavedSession(value: unknown): { session: SavedSession; w
   const audioRevision = source.audioRevision === undefined || source.audioRevision === null ? source.audioRevision as undefined | null : string(source.audioRevision, "audioRevision", 128)!;
   const audio = optional("legacy audio", source.audio, cleanSavedAudio);
   if (source.privacy !== undefined && typeof source.privacy !== "boolean") warnings.push("privacy preference");
+  const boardMoments = optional("whiteboard moments", source.boardMoments, cleanBoardMoments) ?? [];
   return {
     session: {
       version: 1, audio, audioRevision, keywords: string(source.keywords, "keywords", 4_100)!,
       lesson: { subject: string(lessonValue.subject, "lesson.subject", 100)!, grade: string(lessonValue.grade, "lesson.grade", 50)!, objective: string(lessonValue.objective, "lesson.objective", 500)!, standards: string(lessonValue.standards, "lesson.standards", 500)! },
-      turns, durationMs, refImage, diagram, result, resultSource, resultDiagram: result ? resultDiagram : null, privacy: source.privacy === true,
+      turns, durationMs, refImage, diagram, result, resultSource, resultDiagram: result ? resultDiagram : null, privacy: source.privacy === true, boardMoments,
     },
     warning: warnings.length ? `The lecture was restored, but invalid saved ${warnings.join(", ")} ${warnings.length === 1 ? "was" : "were"} removed.` : undefined,
   };

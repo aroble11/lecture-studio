@@ -50,6 +50,19 @@ The detector may find several matches for a phrase; your box decides which one i
 Set kind to "mostly_text" (and objects to []) if the image is mainly writing with no drawn or photographed objects.
 "summary" is one sentence describing the image.`;
 
+const BOARD_INSTRUCTIONS = `You help a teacher pair a whiteboard drawing with the class's guided notes.
+The image is a cleaned-up crop of the teacher's whiteboard: dark marker on white.
+Decide whether it contains a drawing or diagram — a table or grid, arrows, a number line, a graph, a chart,
+shapes, a sketch, a labeled figure, or a worked example laid out spatially. If it is only sentences or a plain
+list of words, set kind to "mostly_text" and objects to [].
+Otherwise set kind to "objects" and return up to ${LABELING.maxItems} distinct parts of the drawing worth pointing
+students to (for example "ones place column", "carry arrow", "place-value table", "denominator"), favoring parts
+that fit the lesson. "label" is the term students should know for that part; "phrase" is a short description of
+it (1-4 words). Do not label the whiteboard itself, people, or anything that is not part of the drawing.
+"approxBox" is the location of that part, in coordinates normalized 0-1000 (x1,y1 = top-left, x2,y2 =
+bottom-right; 0,0 is the image's top-left corner, 1000,1000 its bottom-right). Make it tight around the part.
+"summary" is one sentence describing what is drawn.`;
+
 type Plan = {
   kind: "objects" | "mostly_text";
   summary: string;
@@ -68,12 +81,12 @@ function contextText(ctx: LessonContext) {
   return lines.length ? `Lesson context:\n${lines.join("\n")}` : "No lesson context given.";
 }
 
-async function planLabels(client: OpenAI, model: string, image: string, ctx: LessonContext, signal?: AbortSignal): Promise<Plan> {
+async function planLabels(client: OpenAI, model: string, image: string, ctx: LessonContext, signal?: AbortSignal, board = false): Promise<Plan> {
   const res = await client.responses.create({
     model,
     reasoning: { effort: LABELING.effort },
     max_output_tokens: LABELING.maxOutputTokens,
-    instructions: INSTRUCTIONS,
+    instructions: board ? BOARD_INSTRUCTIONS : INSTRUCTIONS,
     input: [
       {
         role: "user",
@@ -160,7 +173,7 @@ function readingOrder<T extends { box: Box }>(items: T[]): T[] {
 export async function analyzeImage(
   image: string,
   ctx: LessonContext,
-  opts: { apiKey: string; baseURL?: string; signal?: AbortSignal },
+  opts: { apiKey: string; baseURL?: string; signal?: AbortSignal; /** A lifted whiteboard drawing: Wonder places the markers; SAM (which can't find handwriting) is skipped. */ board?: boolean },
 ): Promise<DiagramResult> {
   const client = new OpenAI({
     apiKey: opts.apiKey,
@@ -173,16 +186,23 @@ export async function analyzeImage(
   let model: string = MODELS.generation;
   let plan: Plan;
   try {
-    plan = await planLabels(client, model, image, ctx, opts.signal);
+    plan = await planLabels(client, model, image, ctx, opts.signal, opts.board);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     console.warn(`[label] ${model} failed, falling back to ${MODELS.generationFallback}:`, err);
     model = MODELS.generationFallback;
-    plan = await planLabels(client, model, image, ctx, opts.signal);
+    plan = await planLabels(client, model, image, ctx, opts.signal, opts.board);
   }
 
   const objects = plan.kind === "objects" ? plan.objects.slice(0, LABELING.maxItems) : [];
-  const found = await Promise.all(
+  const found = opts.board
+    ? objects.map((o) => {
+      const phrase = o.phrase.trim().slice(0, 60);
+      const label = o.label.trim().slice(0, 80);
+      const box = clampBox(o.approxBox);
+      return phrase && label && area(box) > 0 ? { label, phrase, box, score: 1 } : null;
+    })
+    : await Promise.all(
     objects.map(async (o) => {
       const phrase = o.phrase.trim().slice(0, 60);
       const label = o.label.trim().slice(0, 80);
