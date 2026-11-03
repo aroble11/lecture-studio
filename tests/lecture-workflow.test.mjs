@@ -116,3 +116,39 @@ test("the save banner prioritizes errors, then warnings, then progress, then the
   assert.equal(done.attention, true);
   assert.equal(done.retry, false);
 });
+
+const turn = (startMs, text) => ({ startMs, endMs: startMs + 4_000, text });
+const json = (v) => JSON.stringify(v);
+
+test("transcript edits are tidied, keep their times, and drop emptied segments", () => {
+  const turns = [turn(0, "Binary uses two digits."), turn(4_000, "Decimel uses ten."), turn(8_000, "Um.")];
+  const edited = w.applyTranscriptEdits(turns, ["Binary uses two digits.", "  Decimal   uses ten. ", "   "]);
+  assert.equal(json(edited), json([turn(0, "Binary uses two digits."), turn(4_000, "Decimal uses ten.")]));
+  assert.equal(turns[1].text, "Decimel uses ten.", "the original transcript is not changed");
+  assert.equal(w.applyTranscriptEdits(turns, ["", "", ""]).length, 1, "at least one segment always stays");
+  assert.equal(w.applyTranscriptEdits([turn(0, "a")], ["x".repeat(20_000)])[0].text.length, w.MAX_SEGMENT_CHARS);
+});
+
+test("materials are flagged as outdated only when the transcript they came from was edited", () => {
+  const turns = [turn(0, "One."), turn(4_000, "Two.")];
+  assert.equal(w.materialsOutdated(turns, { turns: turns.map((t) => ({ ...t })) }), false);
+  assert.equal(w.materialsOutdated(w.applyTranscriptEdits(turns, ["One!", "Two."]), { turns }), true);
+  assert.equal(w.materialsOutdated(turns, null), false, "no materials, nothing to flag");
+});
+
+const item = (n, label, box) => ({ n, label, phrase: label, box, score: 1 });
+
+test("moving a numbered marker carries its box and keeps it on the picture", () => {
+  const moved = w.moveDiagramItem(item(1, "ones place", { x1: 100, y1: 100, x2: 200, y2: 150 }), 500.4, 600.6);
+  assert.equal(json(moved.box), json({ x1: 500, y1: 601, x2: 600, y2: 651 }));
+  const edge = w.moveDiagramItem(item(1, "x", { x1: 0, y1: 0, x2: 100, y2: 100 }), 990, -20);
+  assert.equal(json(edge.box), json({ x1: 900, y1: 0, x2: 1000, y2: 100 }));
+});
+
+test("renaming a label trims it, ignores blanks, and leaves other labels alone", () => {
+  const items = [item(1, "speaker", { x1: 0, y1: 0, x2: 1, y2: 1 }), item(2, "table", { x1: 0, y1: 0, x2: 1, y2: 1 })];
+  const renamed = w.renameDiagramItem(items, 1, "   ones   place ");
+  assert.equal(json(renamed.map((i) => i.label)), json(["ones place", "table"]));
+  assert.equal(w.renameDiagramItem(items, 1, "   "), items);
+  assert.equal(w.renameDiagramItem(items, 2, "y".repeat(100))[1].label.length, w.MAX_LABEL_CHARS);
+});

@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { clearProfile, EMPTY_PROFILE, isEmptyProfile, saveProfile, type TeacherProfile } from "@/lib/profile-store";
 
-const inputClass = "mt-1 w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-700";
+const inputClass = "mt-1.5 w-full rounded-xl border border-field bg-surface px-3.5 py-2.5 text-base font-semibold text-ink placeholder:font-normal placeholder:text-subtle focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25";
 
-/** Saved teacher profile: fills in subject/grade for each new lecture and shapes every generation. */
+/** Saved teacher profile: a header button that opens a dialog. It fills in subject/grade and shapes every generation. */
 export default function ProfileCard({
   profile,
   onSave,
@@ -15,7 +15,7 @@ export default function ProfileCard({
   onSave: (p: TeacherProfile) => void;
   onClear: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [isOpen, setOpen] = useState(false);
   const [draft, setDraft] = useState<TeacherProfile>(profile ?? EMPTY_PROFILE);
   const [saveFailed, setSaveFailed] = useState(false);
   const empty = isEmptyProfile(profile);
@@ -23,18 +23,23 @@ export default function ProfileCard({
   function open() {
     setDraft(profile ?? EMPTY_PROFILE);
     setSaveFailed(false);
-    setEditing(true);
+    setOpen(true);
+  }
+
+  function close() {
+    setOpen(false);
   }
 
   function save() {
     const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, v.trim()])) as TeacherProfile;
-    setSaveFailed(!saveProfile(clean)); // still used for this visit even if the browser blocks storage
+    const saved = saveProfile(clean); // still used for this visit even if the browser blocks storage
+    setSaveFailed(!saved);
     onSave(clean);
-    setEditing(false);
+    if (saved) close();
   }
 
   function clear() {
-    if (!window.confirm("Delete your saved teaching profile from this browser? Your current lecture will not be deleted.")) return;
+    if (!window.confirm("Delete your saved class profile from this browser? Your current lecture will not be deleted.")) return;
     if (!clearProfile()) {
       setSaveFailed(true);
       return;
@@ -42,84 +47,84 @@ export default function ProfileCard({
     setSaveFailed(false);
     setDraft(EMPTY_PROFILE);
     onClear();
+    close();
   }
 
-  if (!editing) {
-    const summary = [profile?.subject, profile?.grade && `Grade ${profile.grade}`].filter(Boolean).join(" · ");
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-6 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <span className="text-zinc-600 dark:text-zinc-400">
-          {empty ? (
-            "Save a teaching profile so every lecture starts with your subject, grade, and style."
-          ) : (
-            <>
-              <span className="font-medium text-zinc-900 dark:text-zinc-100">Your profile</span>
-              {summary && ` · ${summary}`}
-              {profile?.style && " · style saved"}
-            </>
-          )}
-        </span>
-        <div className="flex gap-3">
-          <button onClick={open} className="font-medium text-blue-700 underline hover:text-blue-900 dark:text-blue-400">
-            {empty ? "Set up profile" : "Edit"}
-          </button>
-          {!empty && (
-            <button onClick={clear} className="font-medium text-zinc-500 underline hover:text-red-700">
-              Delete profile
-            </button>
-          )}
-        </div>
-        {saveFailed && <span className="w-full text-red-600">This browser could not update the saved profile.</span>}
-      </div>
-    );
-  }
+  const summary = [profile?.subject, profile?.grade && `Grade ${profile.grade}`].filter(Boolean).join(" · ");
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-      <h2 className="text-lg font-semibold">Your teaching profile</h2>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Saved in this browser and used for every lecture. Describe your class in general terms — never student names or records.
-      </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-sm font-medium">
-          Subject you usually teach
-          <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} maxLength={100} placeholder="U.S. History" className={inputClass} />
-        </label>
-        <label className="text-sm font-medium">
-          Grade
-          <input value={draft.grade} onChange={(e) => setDraft({ ...draft, grade: e.target.value })} maxLength={50} placeholder="10" className={inputClass} />
-        </label>
-        <label className="text-sm font-medium sm:col-span-2">
-          How you like materials written
-          <textarea
-            value={draft.style}
-            onChange={(e) => setDraft({ ...draft, style: e.target.value })}
-            rows={2}
-            maxLength={600}
-            placeholder="Short sentences, friendly tone; real-world examples; quiz questions that ask why, not just what"
-            className={inputClass}
-          />
-        </label>
-        <label className="text-sm font-medium sm:col-span-2">
-          About your class <span className="font-normal text-zinc-500">(general — no names)</span>
-          <textarea
-            value={draft.classNotes}
-            onChange={(e) => setDraft({ ...draft, classNotes: e.target.value })}
-            rows={2}
-            maxLength={600}
-            placeholder="Several English learners — include a word bank and sentence starters; 50-minute periods"
-            className={inputClass}
-          />
-        </label>
-      </div>
-      <div className="mt-4 flex gap-3">
-        <button onClick={save} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-          Save profile
-        </button>
-        <button onClick={() => setEditing(false)} className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
-          Cancel
-        </button>
-      </div>
-    </div>
+    <>
+      <button
+        onClick={open}
+        className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-line-strong bg-surface px-4 text-[15px] font-bold text-ink hover:border-brand hover:text-brand"
+      >
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+        {empty ? "Set up my class" : "My class profile"}
+        {!empty && summary && <span className="hidden font-semibold text-subtle sm:inline">· {summary}</span>}
+      </button>
+
+      {isOpen && <dialog
+        // Rendered only while open (so its fields never duplicate the lesson form's labels), then shown modally.
+        ref={(el) => { if (el && !el.open) el.showModal(); }}
+        onClose={close}
+        aria-labelledby="profile-title"
+        className="m-auto w-[min(640px,calc(100vw-32px))] rounded-3xl border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-black/50"
+      >
+        <form method="dialog" onSubmit={(e) => { e.preventDefault(); save(); }} className="flex flex-col gap-5 p-7">
+          <div>
+            <h2 id="profile-title" className="text-2xl font-extrabold">My class profile</h2>
+            <p className="mt-1 text-[15px] leading-relaxed text-muted">
+              Saved on this computer and used for every lecture. Describe your class in general terms — never student names or records.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-[15px] font-bold">
+              Subject you usually teach
+              <input value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} maxLength={100} placeholder="U.S. History" className={inputClass} />
+            </label>
+            <label className="text-[15px] font-bold">
+              Grade
+              <input value={draft.grade} onChange={(e) => setDraft({ ...draft, grade: e.target.value })} maxLength={50} placeholder="10" className={inputClass} />
+            </label>
+            <label className="text-[15px] font-bold sm:col-span-2">
+              How you like materials written
+              <textarea
+                value={draft.style}
+                onChange={(e) => setDraft({ ...draft, style: e.target.value })}
+                rows={2}
+                maxLength={600}
+                placeholder="Short sentences, friendly tone; real-world examples; quiz questions that ask why, not just what"
+                className={inputClass}
+              />
+            </label>
+            <label className="text-[15px] font-bold sm:col-span-2">
+              About your class <span className="font-semibold text-subtle">(general — no names)</span>
+              <textarea
+                value={draft.classNotes}
+                onChange={(e) => setDraft({ ...draft, classNotes: e.target.value })}
+                rows={2}
+                maxLength={600}
+                placeholder="Several English learners — include a word bank and sentence starters; 50-minute periods"
+                className={inputClass}
+              />
+            </label>
+          </div>
+          {saveFailed && <p role="alert" className="text-[15px] font-semibold text-danger">This browser could not update the saved profile.</p>}
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-extrabold text-on-brand hover:bg-brand-dark">
+              Save profile
+            </button>
+            <button type="button" onClick={close} className="min-h-11 rounded-xl border border-line-strong bg-surface px-5 text-[15px] font-bold hover:bg-tint">
+              Cancel
+            </button>
+            {!empty && (
+              <button type="button" onClick={clear} className="ml-auto min-h-11 px-2 text-[15px] font-bold text-muted underline hover:text-danger">
+                Delete profile
+              </button>
+            )}
+          </div>
+        </form>
+      </dialog>}
+    </>
   );
 }

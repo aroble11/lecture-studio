@@ -1,7 +1,7 @@
 // Pure workflow decisions for the capture screen (no React, no browser APIs), so they can be unit
 // tested and reused by Day 7 editing/export. LectureCapture.tsx owns state and side effects only.
 import type { Turn } from "./meta-asr";
-import type { DiagramContext, DiagramResult } from "./diagram";
+import type { DiagramContext, DiagramItem, DiagramResult } from "./diagram";
 import type { LessonContext } from "./materials";
 import type { ResultSource } from "./session-store";
 
@@ -109,4 +109,50 @@ export function saveStatus(session: SaveState, audio: SaveState, audioBytes: num
       ? `Lecture details are saved, but this ${(audioBytes / (1024 * 1024)).toFixed(1)} MB audio exceeds the ${limitMb} MB browser-save limit. It will not survive a refresh.`
       : "Saved in this browser.");
   return { message, attention: Boolean(error || warning || tooLarge !== null), retry: error !== null };
+}
+
+// ---------- Teacher edits ----------
+
+/** Longest single transcript segment and longest label, matching what saved lectures accept. */
+export const MAX_SEGMENT_CHARS = 12_000;
+export const MAX_LABEL_CHARS = 80;
+
+/**
+ * Apply edited segment text to a transcript. Text is tidied (spaces collapsed, trimmed, length-capped); a
+ * segment edited to nothing is removed, but at least one segment always stays. Timestamps never change.
+ */
+export function applyTranscriptEdits(turns: Turn[], drafts: string[]): Turn[] {
+  const edited = turns.map((turn, i) => ({
+    ...turn,
+    text: (drafts[i] ?? turn.text).replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim().slice(0, MAX_SEGMENT_CHARS),
+  }));
+  const kept = edited.filter((turn) => turn.text);
+  return kept.length ? kept : edited.slice(0, 1).map((turn, i) => ({ ...turn, text: turns[i].text }));
+}
+
+/** True when two transcripts say the same thing at the same times. */
+export function sameTranscript(a: readonly Turn[], b: readonly Turn[]): boolean {
+  return a.length === b.length && a.every((turn, i) => turn.text === b[i].text && turn.startMs === b[i].startMs && turn.endMs === b[i].endMs);
+}
+
+/** Materials are out of date when the transcript they were made from has since been edited. */
+export function materialsOutdated(turns: readonly Turn[], source: { turns: readonly Turn[] } | null | undefined): boolean {
+  return Boolean(source) && !sameTranscript(turns, source!.turns);
+}
+
+/**
+ * Move a numbered marker so it sits at (x, y) on the picture (0–1000 coordinates). The marker is drawn at the
+ * top-left of the item's box, so the box moves with it, keeping its size and staying on the picture.
+ */
+export function moveDiagramItem(item: DiagramItem, x: number, y: number): DiagramItem {
+  const w = Math.max(0, item.box.x2 - item.box.x1), h = Math.max(0, item.box.y2 - item.box.y1);
+  const x1 = Math.round(Math.min(1000 - w, Math.max(0, x)));
+  const y1 = Math.round(Math.min(1000 - h, Math.max(0, y)));
+  return { ...item, box: { x1, y1, x2: x1 + w, y2: y1 + h } };
+}
+
+/** Rename one numbered item. Blank names are ignored (the old name stays); names are trimmed and length-capped. */
+export function renameDiagramItem(items: DiagramItem[], n: number, label: string): DiagramItem[] {
+  const clean = label.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
+  return clean ? items.map((item) => (item.n === n ? { ...item, label: clean } : item)) : items;
 }

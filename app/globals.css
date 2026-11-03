@@ -1,26 +1,129 @@
 @import "tailwindcss";
 
+/* Sunny Desk follows the browser/OS light or dark setting unless the header switch sets data-theme on <html>. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light dark;
+  --canvas: #f6f7fb;
+  --surface: #ffffff;
+  --ink: #1e2433;
+  --body: #3a4157;
+  --muted: #4a5168;
+  --subtle: #5a6178;
+  --line: #e6e8f0;
+  --line-strong: #d5d9e6;
+  --field: #c9cfdd;
+  --blank: #8a93aa;
+  --tint: #f3f5fa;
+  --tint-soft: #f8f9fd;
+  --brand: #2457d0;
+  --brand-dark: #163c99;
+  --brand-soft: #e6ecfa;
+  --on-brand: #ffffff;
+  --sun: #ffe08a;
+  --sun-soft: #fff4cc;
+  --sun-line: #f0d7a8;
+  --sun-ink: #6b3b00;
+  --danger: #b4321f;
+  --ok: #1d6b3f;
+  --ok-soft: #e9f7ef;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* Dark colors apply when the browser prefers dark (unless the switch says Light), or when the switch says Dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --canvas: #12151d;
+    --surface: #1b1f2a;
+    --ink: #eef1f8;
+    --body: #d3d8e6;
+    --muted: #b8bfd0;
+    --subtle: #a6aec2;
+    --line: #2b3141;
+    --line-strong: #3b4357;
+    --field: #4b546b;
+    --blank: #7d869c;
+    --tint: #232837;
+    --tint-soft: #1f2431;
+    --brand: #8fb0ff;
+    --brand-dark: #b8ccff;
+    --brand-soft: #22305a;
+    --on-brand: #0b1530;
+    --sun: #6a5418;
+    --sun-soft: #352c12;
+    --sun-line: #6b5523;
+    --sun-ink: #ffd98a;
+    --danger: #ff9b8c;
+    --ok: #8fe0ae;
+    --ok-soft: #173826;
   }
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #12151d;
+  --surface: #1b1f2a;
+  --ink: #eef1f8;
+  --body: #d3d8e6;
+  --muted: #b8bfd0;
+  --subtle: #a6aec2;
+  --line: #2b3141;
+  --line-strong: #3b4357;
+  --field: #4b546b;
+  --blank: #7d869c;
+  --tint: #232837;
+  --tint-soft: #1f2431;
+  --brand: #8fb0ff;
+  --brand-dark: #b8ccff;
+  --brand-soft: #22305a;
+  --on-brand: #0b1530;
+  --sun: #6a5418;
+  --sun-soft: #352c12;
+  --sun-line: #6b5523;
+  --sun-ink: #ffd98a;
+  --danger: #ff9b8c;
+  --ok: #8fe0ae;
+  --ok-soft: #173826;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--canvas);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-nunito);
+  --font-mono: var(--font-geist-mono);
+
+  /* Text colors meet 4.5:1 on surface and canvas in both modes. */
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-body: var(--body);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-field: var(--field);
+  --color-blank: var(--blank);
+  --color-tint: var(--tint);
+  --color-tint-soft: var(--tint-soft);
+  --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-soft: var(--brand-soft);
+  --color-on-brand: var(--on-brand);
+  --color-sun: var(--sun);
+  --color-sun-soft: var(--sun-soft);
+  --color-sun-line: var(--sun-line);
+  --color-sun-ink: var(--sun-ink);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  /* Fixed in both modes: the apple logo red and the numbered diagram markers (white text on it). */
+  --color-apple: #b4321f;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-nunito), system-ui, Arial, Helvetica, sans-serif;
 }

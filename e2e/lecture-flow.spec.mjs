@@ -72,8 +72,8 @@ test("upload, transcribe, generate, and restore the lecture after a refresh", as
   await expect(page.getByRole("status").filter({ hasText: "Saved in this browser." })).toBeVisible();
 
   await page.getByLabel("Subject").fill("U.S. History");
-  await page.getByLabel(/Key vocabulary/).fill("Federalism");
-  await page.getByLabel("Upload audio").setInputFiles({ name: "lecture.wav", mimeType: "audio/wav", buffer: toneWav(100) });
+  await page.getByLabel(/Key words and names/).fill("Federalism");
+  await page.getByLabel(/Upload a recording/).setInputFiles({ name: "lecture.wav", mimeType: "audio/wav", buffer: toneWav(100) });
   await expect(page.getByText("lecture.wav")).toBeVisible();
 
   await page.getByRole("button", { name: "Transcribe lecture" }).click();
@@ -85,7 +85,7 @@ test("upload, transcribe, generate, and restore the lecture after a refresh", as
 
   await page.getByLabel(/Use open-weight model for materials/).check();
   await page.getByRole("button", { name: "Generate materials" }).click();
-  await expect(page.getByRole("heading", { name: "Materials", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your materials", exact: true })).toBeVisible();
   await expect(page.getByText("Federalism Guided Notes")).toBeVisible();
   await expect(page.getByText("Open-weight generation")).toBeVisible();
   expect(calls.generate).toHaveLength(1);
@@ -117,11 +117,11 @@ test("file upload controls are named, described, and reachable by keyboard", asy
   await page.goto("/");
   await expect(page.getByRole("status").filter({ hasText: "Saved in this browser." })).toBeVisible();
 
-  const audioUpload = page.getByLabel("Upload audio");
+  const audioUpload = page.getByLabel(/Upload a recording/);
   await expect(audioUpload).toHaveAttribute("type", "file");
-  const imageUpload = page.getByLabel("Add image");
+  const imageUpload = page.getByLabel("Choose picture");
   await expect(imageUpload).toHaveAttribute("type", "file");
-  await expect(imageUpload).toHaveAccessibleDescription(/a slide, worksheet, diagram, or photo/);
+  await expect(imageUpload).toHaveAccessibleDescription(/slide, worksheet, or photo/);
 
   for (const control of [audioUpload, imageUpload]) {
     await page.locator("body").focus();
@@ -137,6 +137,8 @@ test("file upload controls are named, described, and reachable by keyboard", asy
 test("data-flow disclosures appear before upload and on the privacy page", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
+  await expect(page.getByText(/Audio is sent to Meta to be transcribed\./)).toBeVisible();
+  await page.getByText("Where my data goes").click();
   await expect(page.getByText("Audio chunks and key vocabulary go to Meta for transcription.")).toBeVisible();
   await expect(page.getByText(/the open-weight option sends that generation step to Baseten instead/)).toBeVisible();
   await expect(page.getByText("Privacy Mode")).toHaveCount(0);
@@ -148,4 +150,91 @@ test("data-flow disclosures appear before upload and on the privacy page", async
   await expect(page.getByText(/does not make claims about provider retention, district approval, or legal compliance/)).toBeVisible();
   await expect(page.getByText(/deletes the saved teaching profile/)).toBeVisible();
   await expect(page.getByText(/Audio over 100 MB/)).toBeVisible();
+});
+
+test("theme switch overrides the browser setting and is remembered", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  const html = page.locator("html");
+  await expect(page.getByRole("radio", { name: "Match browser" })).toBeChecked();
+
+  await page.locator('label[for="theme-dark"]').click();
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
+
+  await page.locator('label[for="theme-system"]').click();
+  await expect(html).not.toHaveAttribute("data-theme", /./);
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "Match browser" })).toBeChecked();
+});
+
+test("the sample lecture loads finished materials without calling any API", async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.route("**/sample/sample-lecture.json", (route) => route.fulfill({
+    json: {
+      format: "lecture-studio-sample",
+      version: 1,
+      title: "Federalism sample",
+      session: {
+        version: 1,
+        keywords: "Federalism",
+        lesson: { subject: "U.S. History", grade: "10", objective: "", standards: "" },
+        turns: [{ startMs: 0, endMs: 5_000, text: "Federalism divides power between levels of government." }],
+        durationMs: 5_000,
+        refImage: null,
+        diagram: null,
+        result: { materials, model: "test-model", seconds: 1 },
+        resultSource: null,
+        resultDiagram: null,
+        privacy: false,
+      },
+    },
+  }));
+  await page.goto("/");
+  await expect(page.getByRole("status").filter({ hasText: "Saved in this browser." })).toBeVisible();
+
+  await page.getByRole("button", { name: /Try a sample lecture/ }).click();
+  await expect(page.getByText(/Sample lecture: Federalism sample\./)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your materials", exact: true })).toBeVisible();
+  await expect(page.getByText("Federalism Guided Notes")).toBeVisible();
+  await expect(page.getByLabel("Subject")).toHaveValue("U.S. History");
+
+  expect(calls.transcribe).toHaveLength(0);
+  expect(calls.generate).toHaveLength(0);
+  expect(calls.unexpected).toEqual([]);
+});
+
+test("a teacher can edit the transcript; materials are flagged as outdated and edits survive a refresh", async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.route("**/sample/sample-lecture.json", (route) => route.fulfill({
+    json: {
+      format: "lecture-studio-sample", version: 1, title: "Federalism sample",
+      session: {
+        version: 1, keywords: "", lesson: { subject: "U.S. History", grade: "10", objective: "", standards: "" },
+        turns: [{ startMs: 0, endMs: 5_000, text: "Federalism devides power between levels of government." }],
+        durationMs: 5_000, refImage: null, diagram: null,
+        result: { materials, model: "test-model", seconds: 1 }, resultSource: null, resultDiagram: null, privacy: false,
+      },
+    },
+  }));
+  await page.goto("/");
+  await expect(page.getByRole("status").filter({ hasText: "Saved in this browser." })).toBeVisible();
+  await page.getByRole("button", { name: /Try a sample lecture/ }).click();
+  await expect(page.getByText("Federalism Guided Notes")).toBeVisible();
+
+  await page.getByRole("button", { name: "Edit transcript" }).click();
+  const segment = page.getByLabel(/Transcript from 0:00/);
+  await segment.fill("Federalism divides power between levels of government.");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Federalism divides power between levels of government.").first()).toBeVisible();
+  await expect(page.getByText(/made before you edited the transcript/)).toBeVisible();
+
+  await expect(page.getByRole("status").filter({ hasText: "Saved in this browser." })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Federalism divides power between levels of government.").first()).toBeVisible();
+  await expect(page.getByText(/made before you edited the transcript/)).toBeVisible();
+  expect(calls.transcribe).toHaveLength(0);
+  expect(calls.generate).toHaveLength(0);
 });
