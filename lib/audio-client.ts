@@ -127,6 +127,44 @@ function toPcm16(samples: Float32Array, chunk: Chunk): ArrayBuffer {
   return out.buffer;
 }
 
+/** A 429 worth waiting out: the shared transcription slots are full, or the firewall's per-IP
+ *  window is spent. A daily-allowance 429 is final and stays an ordinary Error. */
+class BusyError extends Error {
+  retryAfterMs: number | null;
+  constructor(retryAfterMs: number | null) {
+    super("The transcription service is busy.");
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Finished chunk transcripts by chunk index; undefined marks a chunk still to send. */
+export type ChunkResults = (Turn[] | undefined)[];
+
+/** Transcription stopped early. `partial` keeps every finished chunk so retrying the same audio
+ *  with the same keywords sends only the missing chunks (they were already counted and billed). */
+export class TranscriptionError extends Error {
+  partial: ChunkResults;
+  constructor(message: string, partial: ChunkResults) {
+    super(message);
+    this.name = "TranscriptionError";
+    this.partial = partial;
+  }
+}
+
+function retryAfterMs(res: Response): number | null {
+  const value = res.headers.get("retry-after")?.trim();
+  return value && /^\d+$/.test(value) ? Number(value) * 1000 : null;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, Math.max(0, ms));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function transcribeChunk(pcm: ArrayBuffer, keywords: string[], signal?: AbortSignal): Promise<Turn[]> {
   const qs = keywords.map((k) => "kw=" + encodeURIComponent(k)).join("&");
   const deadline = new AbortController();
@@ -143,6 +181,12 @@ async function transcribeChunk(pcm: ArrayBuffer, keywords: string[], signal?: Ab
         signal: deadline.signal,
       });
       if (res.ok) return ((await res.json()) as { turns: Turn[] }).turns;
+      if (res.status === 429) {
+        // The app's 429s name a reason; a firewall 429 does not and is treated as busy.
+        const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: string };
+        if (body.reason === "daily") throw new Error(body.error ?? "Today's transcription allowance has been reached.");
+        throw new BusyError(retryAfterMs(res));
+      }
       // Client errors won't fix themselves; server/upstream errors get one retry within the same total deadline.
       if (res.status < 500 || attempt >= 2) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -160,28 +204,46 @@ async function transcribeChunk(pcm: ArrayBuffer, keywords: string[], signal?: Ab
   }
 }
 
-export type Progress = { done: number; total: number };
+/** `waiting` is true while chunks are paused because the service is busy. */
+export type Progress = { done: number; total: number; waiting?: boolean };
 
-/** Transcribe all chunks (up to `concurrency` at once) and return turns on the lecture timeline. */
+/** Transcribe all chunks (up to `concurrency` at once) and return turns on the lecture timeline.
+ *  Busy responses requeue the chunk, pause all workers and drop one worker until the service
+ *  recovers. Any other failure aborts in-flight siblings and throws a TranscriptionError that
+ *  carries the finished chunks; pass them back as `resume` to send only what is missing. */
 export async function transcribeLecture(
   samples: Float32Array,
   keywords: string[],
-  opts: { concurrency?: number; onProgress?: (p: Progress) => void; signal?: AbortSignal } = {},
+  opts: { concurrency?: number; onProgress?: (p: Progress) => void; signal?: AbortSignal; resume?: ChunkResults } = {},
 ): Promise<Turn[]> {
   const chunks = planChunks(samples);
-  const results: Turn[][] = new Array(chunks.length);
-  let next = 0;
-  let done = 0;
-  opts.onProgress?.({ done, total: chunks.length });
+  // The same audio always produces the same plan, so a matching length means matching chunks.
+  const results: ChunkResults = opts.resume?.length === chunks.length ? [...opts.resume] : new Array(chunks.length).fill(undefined);
+  const queue = chunks.map((_, i) => i).filter((i) => !results[i]);
+  let done = chunks.length - queue.length;
+  const report = (waiting = false) => opts.onProgress?.({ done, total: chunks.length, waiting });
+  report();
 
   const group = new AbortController();
   const onAbort = () => group.abort(opts.signal?.reason);
   if (opts.signal?.aborted) onAbort();
   else opts.signal?.addEventListener("abort", onAbort, { once: true });
-  let failed = false;
-  async function worker() {
-    while (!failed && next < chunks.length) {
-      const i = next++;
+
+  const workers = Math.max(1, Math.min(opts.concurrency ?? ASR.concurrency, queue.length));
+  let allowed = workers;
+  let pauseUntil = 0;
+  let lastBusyAt = 0;
+  let lastProgressAt = Date.now();
+  let failure: unknown = null;
+
+  async function worker(id: number) {
+    while (failure === null && queue.length) {
+      if (id >= allowed || Date.now() < pauseUntil) {
+        // Short local checks, so a pause can end early when a sibling chunk frees a slot.
+        await sleep(Math.min(ASR.busyIdleCheckMs, Math.max(0, pauseUntil - Date.now()) || ASR.busyIdleCheckMs), group.signal);
+        continue;
+      }
+      const i = queue.shift()!;
       const chunk = chunks[i];
       const offsetMs = Math.round((chunk.start / SAMPLE_RATE) * 1000);
       try {
@@ -191,19 +253,39 @@ export async function transcribeLecture(
           startMs: t.startMs + offsetMs,
           endMs: t.endMs + offsetMs,
         }));
+        done++;
+        lastProgressAt = Date.now();
+        pauseUntil = 0; // a slot just freed, so paused workers may retry now
+        if (allowed < workers && lastProgressAt - lastBusyAt >= ASR.busyRecoverMs) allowed++;
+        report();
       } catch (err) {
-        failed = true; // stop other workers from starting new chunks
-        group.abort(err);
-        throw err;
+        if (err instanceof BusyError && failure === null && Date.now() - lastProgressAt < ASR.busyGiveUpMs) {
+          queue.unshift(i);
+          lastBusyAt = Date.now();
+          allowed = Math.max(1, allowed - 1);
+          const wait = Math.min(ASR.busyRetryMaxMs, Math.max(ASR.busyRetryMinMs, err.retryAfterMs ?? ASR.busyRetryDefaultMs));
+          pauseUntil = Math.max(pauseUntil, lastBusyAt + wait + Math.random() * ASR.busyRetryJitterMs);
+          report(true);
+          continue;
+        }
+        if (failure === null) {
+          failure = err instanceof BusyError
+            ? new Error("The transcription service is still busy. Please try again in a few minutes.")
+            : err;
+          group.abort(failure); // stop in-flight siblings and paused workers
+        }
+        throw failure;
       }
-      opts.onProgress?.({ done: ++done, total: chunks.length });
     }
   }
 
-  const workers = Math.min(opts.concurrency ?? ASR.concurrency, chunks.length);
   try {
-    await Promise.all(Array.from({ length: workers }, worker));
-    return results.flat();
+    await Promise.all(Array.from({ length: workers }, (_, id) => worker(id)));
+    return results.flatMap((turns) => turns ?? []);
+  } catch (err) {
+    const reason = failure ?? err;
+    const message = reason && typeof (reason as Error).message === "string" ? (reason as Error).message : "Transcription failed — try again";
+    throw new TranscriptionError(message, [...results]);
   } finally {
     opts.signal?.removeEventListener("abort", onAbort);
   }

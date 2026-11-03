@@ -38,7 +38,8 @@ on failures, since the provider may have billed them. Invalid input is rejected 
 Request size and field validation are documented in `REQUEST-LIMITS.md` and `INPUT-VALIDATION.md`.
 
 A single atomic Redis script checks quota and active leases, then reserves both. Exhaustion
-returns 429 with `Retry-After`. Missing credentials, store failures, timeouts, or unexpected
+returns 429 with `Retry-After` and a `reason` of `daily` or `busy`; the browser waits out
+`busy` transcription responses and treats `daily` as final (see `OPERATION-TIMEOUTS.md`). Missing credentials, store failures, timeouts, or unexpected
 responses return 503 and do not start provider work. Admissions are not retried automatically.
 An ambiguous timeout can conservatively consume quota/a slot until expiry.
 

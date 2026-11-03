@@ -28,6 +28,7 @@ for (const [reason, retry] of [["daily", 86400], ["busy", 100]]) {
     const response = await withUsageBudget("generate", async () => { calls++; });
     assert.equal(response.status, 429);
     assert.equal(response.headers.get("retry-after"), String(retry));
+    assert.equal((await response.json()).reason, reason);
     assert.equal(calls, 0);
   });
 }

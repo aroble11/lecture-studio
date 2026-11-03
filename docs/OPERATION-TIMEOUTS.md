@@ -11,14 +11,23 @@ explicit budgets that fit the server routes.
   parallel SAM phase (15 seconds) fit inside the labeling route's 60-second limit.
 - Browser transcription gives a chunk and its optional HTTP retry one shared 100-second deadline.
   A failure aborts every in-flight sibling chunk immediately and prevents new chunks from starting.
+- A 429 "busy" response (shared transcription slots full) or a firewall 429 is not a failure. The
+  chunk returns to the queue, all workers pause for the server's `Retry-After` (bounded to 2–20
+  seconds, plus jitter), and one parallel worker is dropped per busy response until 30 seconds pass
+  without one. A pause ends early as soon as another chunk finishes, since that frees a slot.
+  Waiting does not count against the 100-second chunk deadline. Transcription gives up
+  only after 3 minutes with no finished chunk. A 429 whose `reason` is `daily` stays final.
+- When transcription stops early, finished chunks are kept in memory. Retrying the same audio with
+  the same keywords sends only the missing chunks, which avoids re-billing finished work. Changing
+  the audio or keywords, or refreshing the page, starts fresh.
 - Browser cancellation propagates through the API request to generation, labeling, and the ASR
   WebSocket. Aborted work releases its usage lease through the existing route cleanup.
 
 These are wall-clock safety ceilings, not promises that providers will always respond that quickly.
 Timeouts return the existing controlled operation error and can be retried by the teacher.
 
-Run `npm run test:timeouts` for offline provider-option, fallback-budget, sibling-cancellation, and
-pre-cancelled ASR coverage. Tests use stubs and spend no API credits.
+Run `npm run test:timeouts` for offline provider-option, fallback-budget, sibling-cancellation,
+pre-cancelled ASR, busy-retry, and resume coverage. Tests use stubs and spend no API credits.
 
 Verified locally: 6 timeout/cancellation tests, 11 generation-validation tests, 4 operation-
 revision tests, and 113 existing offline tests passed; the one optional live Redis integration

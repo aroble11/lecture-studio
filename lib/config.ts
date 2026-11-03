@@ -43,6 +43,19 @@ export const ASR = {
   maxKeywordLength: 80,
   /** One browser chunk, including its optional HTTP retry, must finish inside this total budget. */
   clientChunkTimeoutMs: 100_000,
+  /** A 429 "busy" (shared transcription slots full) or a firewall 429 is waited out, not fatal.
+   *  The wait follows Retry-After within these bounds; time spent waiting is not chunk processing time. */
+  busyRetryMinMs: 2_000,
+  busyRetryMaxMs: 20_000,
+  /** Used when a 429 carries no Retry-After (for example, the Vercel firewall). */
+  busyRetryDefaultMs: 20_000,
+  busyRetryJitterMs: 2_000,
+  /** Stop waiting when no chunk has finished for this long; finished chunks are kept for a retry. */
+  busyGiveUpMs: 180_000,
+  /** Each busy response drops one parallel worker; one returns after this long without another. */
+  busyRecoverMs: 30_000,
+  /** How often a paused worker checks whether it may resume (local timer only, no requests). */
+  busyIdleCheckMs: 1_000,
 } as const;
 
 export const GENERATION = {

@@ -83,7 +83,8 @@ export async function withUsageBudget(operation: Operation, work: () => Promise<
         !Number.isInteger(result[2]) || result[2] < 0) return unavailable();
     const [allowed, reason, retry] = result;
     if (allowed === 0 && (reason === "daily" || reason === "busy")) {
-      return Response.json({ error: reason === "daily"
+      // `reason` lets clients wait out "busy" while treating "daily" as final.
+      return Response.json({ reason, error: reason === "daily"
         ? "Today's shared demo allowance for this operation has been reached. Please try again tomorrow (UTC)."
         : "The service is busy. Please wait before trying again." }, {
         status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(Math.max(1, retry)) },

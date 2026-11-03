@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { decodeToMono, formatTime, readAudioDurationMs, SAMPLE_RATE, transcribeLecture, type Turn } from "@/lib/audio-client";
+import { decodeToMono, formatTime, readAudioDurationMs, SAMPLE_RATE, transcribeLecture, TranscriptionError, type ChunkResults, type Turn } from "@/lib/audio-client";
 import type { DiagramContext, DiagramResult } from "@/lib/diagram";
 import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult, LessonContext } from "@/lib/materials";
@@ -22,7 +22,7 @@ type Status =
   | { kind: "requesting-microphone" }
   | { kind: "recording"; startedAt: number }
   | { kind: "decoding" }
-  | { kind: "transcribing"; done: number; total: number }
+  | { kind: "transcribing"; done: number; total: number; waiting?: boolean }
   | { kind: "done"; seconds: number }
   | { kind: "error"; message: string };
 type RefImage = PreparedImage & { name: string };
@@ -63,6 +63,8 @@ export default function LectureCapture() {
   const labelRef = useRef<{ image: RefImage; promise: Promise<DiagramResult | null>; controller: AbortController } | null>(null);
   const lectureOps = useRef(createOperationRevision());
   const imageOps = useRef(createOperationRevision());
+  // Finished chunks from an interrupted transcription, reused only for the same audio and keywords.
+  const partialTranscript = useRef<{ audio: Audio; keywords: string; results: ChunkResults } | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -479,6 +481,11 @@ export default function LectureCapture() {
     if (!audio) return;
     const ticket = lectureOps.current.begin();
     const sourceAudio = audio;
+    const keywordList = vocabulary();
+    const keywordKey = keywordList.join("\n");
+    const kept = partialTranscript.current;
+    const resume = kept?.audio === sourceAudio && kept.keywords === keywordKey ? kept.results : undefined;
+    if (!resume) partialTranscript.current = null;
     const started = Date.now();
     try {
       setStatus({ kind: "decoding" });
@@ -494,21 +501,30 @@ export default function LectureCapture() {
         throw new Error(`Lectures up to ${MAX_MINUTES} minutes are supported; this one is ${formatTime(ms)}.`);
       }
       setDurationMs(ms);
-      const transcript = await transcribeLecture(samples, vocabulary(), {
+      const transcript = await transcribeLecture(samples, keywordList, {
         onProgress: (p) => { if (lectureOps.current.isCurrent(ticket)) setStatus({ kind: "transcribing", ...p }); },
         signal: ticket.controller.signal,
+        resume,
       });
       if (!lectureOps.current.isCurrent(ticket)) return;
+      partialTranscript.current = null;
       setTurns(transcript);
       setResult(null);
       setResultSource(null);
       setStatus({ kind: "done", seconds: (Date.now() - started) / 1000 });
     } catch (err) {
       if (!lectureOps.current.isCurrent(ticket)) return;
-      const message =
+      let message =
         err instanceof DOMException && err.name === "EncodingError"
           ? "This browser couldn't read that audio file. Try m4a, mp3, or wav."
           : err instanceof Error ? err.message : "Something went wrong.";
+      if (err instanceof TranscriptionError) {
+        const finished = err.partial.filter(Boolean).length;
+        if (finished > 0) {
+          partialTranscript.current = { audio: sourceAudio, keywords: keywordKey, results: err.partial };
+          message += ` ${finished} of ${err.partial.length} sections are already done and kept — select Transcribe lecture to finish the rest.`;
+        }
+      }
       setStatus({ kind: "error", message });
     } finally {
       lectureOps.current.finish(ticket);
@@ -692,7 +708,11 @@ export default function LectureCapture() {
             <div className="h-2 w-full overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
               <div className="h-full bg-blue-600 transition-all" style={{ width: `${(status.done / Math.max(1, status.total)) * 100}%` }} />
             </div>
-            <p className="mt-1 text-sm text-zinc-600">Transcribing section {Math.min(status.done + 1, status.total)} of {status.total}…</p>
+            <p className="mt-1 text-sm text-zinc-600">
+              {status.waiting
+                ? `The service is busy — waiting for a free slot. ${status.done} of ${status.total} sections done; finished sections are kept.`
+                : `Transcribing section ${Math.min(status.done + 1, status.total)} of ${status.total}…`}
+            </p>
           </div>
         )}
         {status.kind === "error" && <p className="mt-3 text-sm text-red-600">{status.message}</p>}

@@ -49,3 +49,6 @@ next-env.d.ts
 
 # local test images
 /test-images/
+
+# local test videos (keep private)
+/test-video/
