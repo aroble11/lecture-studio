@@ -25,6 +25,32 @@ format, and several safety layers assume all parts exist. An estimated 2–3 hou
    sections and whiteboard drawings attach to them, so both need a fallback when notes are not chosen.
 6. **Tests:** update the generation, persistence, and browser tests.
 
+## Record video on the site
+
+**Idea:** a **Record video** button beside **Record audio**, so a teacher can point a laptop or tablet at the
+board and capture a class video without a separate camera app. Today video is uploaded (MP4/MOV) and only audio
+is recorded on the site.
+
+**Why it was deferred (November 3, 2026):** about 1–1.5 hours, and every risk is in real browsers (camera
+permission, memory on long recordings, Safari's format), so it could not be proven before the submission
+deadline. Teachers can record with the Windows Camera app or a phone and upload the MP4. Design:
+
+1. **Two recorders on one camera-and-microphone stream, started together:** an audio-only `MediaRecorder` that
+   feeds the existing transcription path, and a 720p video recorder (about 1.5 Mbps, roughly 1 GB per 90 minutes)
+   for whiteboard moments. The separate audio recorder is needed because Chrome, Edge, and Firefox record WebM,
+   which `lib/video-audio.ts` (MP4/MOV only) does not read. Starting both together keeps drawing times aligned
+   with the transcript.
+2. **Video length:** WebM from `MediaRecorder` has no stored duration, so `suggestBoardMoments` in
+   `lib/board-frames.ts` currently stops with "This video's length couldn't be read." Pass the known recording
+   length in, or patch the WebM header after recording.
+3. **Keeping it:** recordings over 100 MB are not saved in the browser, so the video is lost on refresh. Show
+   **Save recording** (already built for audio; extend `recordingExtension` for video types) and warn before the
+   page closes while an unsaved video exists.
+4. **Limits:** raise the video size cap (audio recording stops at 300 MB / 90 minutes) and keep the 90-minute limit.
+5. **Screen:** a small live preview, a tip to point the camera at the board and away from students, and the same
+   permission, stop, and cleanup rules as `docs/RECORDING-LIFECYCLE.md`.
+6. **Tests:** lifecycle doubles for both recorders, and manual checks in Chrome/Edge, Firefox, and Safari.
+
 ## Other ideas
 
 - **Print a single section:** a "Print: Everything / Just this tab" choice beside the print buttons. Printing
