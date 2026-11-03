@@ -8,7 +8,7 @@ import { prepareImage, type PreparedImage } from "@/lib/image-client";
 import type { GenerateResult } from "@/lib/materials";
 import { createOperationRevision } from "@/lib/operation-revision";
 import { loadProfile, type TeacherProfile } from "@/lib/profile-store";
-import { createCompatibleMediaRecorder, RECORDING_LIMITS, recordingLimitMessage, recordingLimitReason, stopMediaRecorder, stopMediaStream, type RecordingLimitReason } from "@/lib/recording-lifecycle";
+import { canPauseRecorder, createCompatibleMediaRecorder, isSiteRecording, pauseRecordingClock, RECORDING_LIMITS, recordedMs, recordingFileName, recordingLabel, recordingLimitMessage, recordingLimitReason, resumeRecordingClock, startRecordingClock, stopMediaRecorder, stopMediaStream, type RecordingClock, type RecordingLimitReason } from "@/lib/recording-lifecycle";
 import { parseSampleLecture, SAMPLE_URL } from "@/lib/sample-lecture";
 import { extractVideoAudio, isVideoFile, MAX_VIDEO_BYTES } from "@/lib/video-audio";
 import type { ResultSource } from "@/lib/session-store";
@@ -28,7 +28,7 @@ type Audio = { blob: Blob; url: string; label: string; revision: string };
 type Status =
   | { kind: "idle" }
   | { kind: "requesting-microphone" }
-  | { kind: "recording"; startedAt: number }
+  | { kind: "recording"; startedAt: number; paused: boolean; canPause: boolean }
   | { kind: "decoding"; progress?: number }
   | { kind: "transcribing"; done: number; total: number; waiting?: boolean }
   | { kind: "done"; seconds: number }
@@ -78,6 +78,8 @@ export default function LectureCapture() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Recorded time for the current recording, excluding pauses. */
+  const recordingClockRef = useRef<RecordingClock | null>(null);
   const microphoneRequestRef = useRef(0);
   const mountedRef = useRef(true);
   const discardRecordingRef = useRef(false);
@@ -273,6 +275,8 @@ export default function LectureCapture() {
   const busy = status.kind === "decoding" || status.kind === "transcribing";
   const requestingMicrophone = status.kind === "requesting-microphone";
   const recording = status.kind === "recording";
+  const recordingPaused = status.kind === "recording" && status.paused;
+  const recordingCanPause = status.kind === "recording" && status.canPause;
   const generating = gen.kind === "generating";
   const loadingSample = sampleStatus.kind === "loading";
   const controlsLocked = !restored || busy || requestingMicrophone || recording || generating || loadingSample || transcriptDrafts !== null;
@@ -556,11 +560,14 @@ export default function LectureCapture() {
     let recordedBytes = 0;
     let limitReason: RecordingLimitReason | null = null;
     const startedAt = Date.now();
+    const clock = startRecordingClock(startedAt);
+    recordingClockRef.current = clock;
+    const recordedSoFar = () => recordedMs(recordingClockRef.current ?? clock, Date.now());
     recorder.ondataavailable = (e) => {
       if (!e.data.size) return;
       parts.push(e.data);
       recordedBytes += e.data.size;
-      limitReason ??= recordingLimitReason(Date.now() - startedAt, recordedBytes);
+      limitReason ??= recordingLimitReason(recordedSoFar(), recordedBytes);
       if (limitReason) stopMediaRecorder(recorder);
     };
     recorder.onstop = () => {
@@ -571,7 +578,7 @@ export default function LectureCapture() {
       timerRef.current = null;
       if (!mountedRef.current || discardRecordingRef.current) return;
       const blob = new Blob(parts, { type: recorder.mimeType });
-      selectAudio(blob, `Recording (${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})`);
+      selectAudio(blob, recordingLabel(new Date(startedAt)));
       if (limitReason) setRecordingNotice(recordingLimitMessage(limitReason));
     };
     recorder.onerror = () => {
@@ -589,12 +596,12 @@ export default function LectureCapture() {
       recorderRef.current = recorder;
       setElapsed(0);
       timerRef.current = setInterval(() => {
-        const nextElapsed = Date.now() - startedAt;
+        const nextElapsed = recordedSoFar();
         setElapsed(nextElapsed);
         limitReason ??= recordingLimitReason(nextElapsed, recordedBytes);
         if (limitReason) stopMediaRecorder(recorder);
       }, 500);
-      setStatus({ kind: "recording", startedAt });
+      setStatus({ kind: "recording", startedAt, paused: false, canPause: canPauseRecorder(recorder) });
     } catch {
       stopMediaStream(stream);
       streamRef.current = null;
@@ -604,6 +611,26 @@ export default function LectureCapture() {
 
   function stopRecording() {
     stopMediaRecorder(recorderRef.current);
+  }
+
+  /** Pause keeps the microphone open (the browser still shows it in use) but adds nothing to the recording. */
+  function pauseRecording() {
+    const recorder = recorderRef.current;
+    const clock = recordingClockRef.current;
+    if (!recorder || !clock || recorder.state !== "recording") return;
+    try { recorder.pause(); } catch { return; }
+    recordingClockRef.current = pauseRecordingClock(clock, Date.now());
+    setElapsed(recordedMs(recordingClockRef.current, Date.now()));
+    setStatus((current) => current.kind === "recording" ? { ...current, paused: true } : current);
+  }
+
+  function resumeRecording() {
+    const recorder = recorderRef.current;
+    const clock = recordingClockRef.current;
+    if (!recorder || !clock || recorder.state !== "paused") return;
+    try { recorder.resume(); } catch { return; }
+    recordingClockRef.current = resumeRecordingClock(clock, Date.now());
+    setStatus((current) => current.kind === "recording" ? { ...current, paused: false } : current);
   }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -760,13 +787,40 @@ export default function LectureCapture() {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recording ? (
-              <button onClick={stopRecording} className={`${tileClass} bg-apple text-white hover:bg-[#962817]`}>
-                <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20">
-                  <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              <div className={`${tileClass} ${recordingPaused ? "border-2 border-sun-line bg-sun-soft text-ink" : "bg-apple text-white"}`}>
+                <span className="sr-only" role="status">{recordingPaused ? "Recording paused" : "Recording"}</span>
+                <span className="flex items-center gap-2.5 text-xl font-extrabold">
+                  <span aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 rounded-full ${recordingPaused ? "bg-sun-ink" : "animate-pulse bg-white"}`} />
+                  {recordingPaused ? "Paused" : "Recording"} · {formatTime(elapsed)}
                 </span>
-                <span className="text-xl font-extrabold">Stop recording · {formatTime(elapsed)}</span>
-                <span className="text-[15px] leading-snug opacity-95">Recording stops by itself at {MAX_MINUTES} minutes.</span>
-              </button>
+                <span className="text-[15px] leading-snug opacity-95">
+                  {recordingPaused
+                    ? "The microphone is still on, but nothing is being recorded."
+                    : `Stops by itself after ${MAX_MINUTES} minutes of recording.`}
+                </span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {recordingCanPause && (
+                    <button
+                      onClick={recordingPaused ? resumeRecording : pauseRecording}
+                      className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 text-[15px] font-extrabold ${recordingPaused ? "bg-brand text-on-brand hover:bg-brand-dark" : "bg-white text-apple hover:bg-white/90"}`}
+                    >
+                      {recordingPaused ? (
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z" /></svg>
+                      ) : (
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                      )}
+                      {recordingPaused ? "Continue" : "Pause"}
+                    </button>
+                  )}
+                  <button
+                    onClick={stopRecording}
+                    className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 text-[15px] font-extrabold ${recordingPaused ? "border border-line-strong bg-surface text-ink hover:border-brand hover:text-brand" : "border border-white/70 text-white hover:bg-white/15"}`}
+                  >
+                    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+                    Stop
+                  </button>
+                </div>
+              </div>
             ) : (
               <button onClick={startRecording} disabled={controlsLocked} className={`${tileClass} bg-brand text-on-brand hover:bg-brand-dark`}>
                 <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20">
@@ -848,6 +902,15 @@ export default function LectureCapture() {
                 </div>
               </div>
               <audio controls src={audio.url} className="w-full" />
+              {isSiteRecording(audio.label) && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <a href={audio.url} download={recordingFileName(audio.label, audio.blob.type)} className={`${secondaryButtonClass} gap-2 self-start`}>
+                    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14" /></svg>
+                    Save recording
+                  </a>
+                  <span className="text-sm text-muted">Keep a copy on this device. Start over deletes the copy in this browser.</span>
+                </div>
+              )}
             </div>
           )}
         </section>
