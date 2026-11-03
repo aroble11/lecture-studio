@@ -1,8 +1,22 @@
 # Lecture Studio
 
 Lecture Studio records or uploads a lecture and turns it into classroom materials. It can transcribe
-audio, label an optional classroom image, generate teacher-facing materials, and keep the current
+audio or the sound of a class video, lift whiteboard drawings out of that video and pair them with the
+guided notes, label an optional classroom image, generate teacher-facing materials, and keep the current
 lecture in the browser between refreshes.
+
+What a teacher can do:
+
+- **Add a lecture:** record with the microphone, upload audio, upload a class video (MP4/MOV; only the
+  sound is transcribed), or open the built-in **Try a sample lecture** (no provider calls).
+- **Whiteboard moments:** from a class video, the browser suggests the fullest board before each erase,
+  lifts the writing off the board, and pairs kept drawings with the matching notes section.
+- **Edit:** correct the transcript, and move or rename the numbered labels on drawings and pictures.
+- **Generate:** guided notes, a 5-question check for understanding, an exit ticket, a bell ringer, a
+  label-the-picture activity, and teacher-only pacing and content-gap feedback.
+- **Print or save as PDF:** a student copy (no answers) or a teacher copy (answer key and feedback).
+
+The interface follows the browser's light or dark setting, with a Match browser / Light / Dark switch.
 
 ## Requirements
 
@@ -49,11 +63,12 @@ counters separate. It should not be added manually for normal deployments.
 
 ## Data flow
 
-1. **Browser capture:** microphone audio, uploaded audio, lesson details, and an optional image begin
-   in the teacher's browser.
-2. **Transcription:** the browser converts audio to mono 24 kHz PCM chunks and sends them to
-   `/api/transcribe`; the server sends those chunks to Meta.
-3. **Image labeling:** when requested, `/api/label` sends the image and lesson context to Meta.
+1. **Browser capture:** microphone audio, uploaded audio or class video, lesson details, and an optional
+   image begin in the teacher's browser. A class video never leaves the browser.
+2. **Transcription:** the browser converts audio (or the sound read out of a video) to mono 24 kHz PCM
+   chunks and sends them to `/api/transcribe`; the server sends those chunks to Meta.
+3. **Image labeling:** when requested, `/api/label` sends the image and lesson context to Meta. Whiteboard
+   moments are found and lifted in the browser; only drawings the teacher keeps are sent, in board mode.
 4. **Materials generation:** `/api/generate` sends the transcript and lesson context either to Meta
    or, when open-weight generation is selected, to Baseten. That selection changes generation only;
    transcription and image labeling still use Meta.
@@ -65,7 +80,9 @@ counters separate. It should not be added manually for normal deployments.
    address (never the address itself) and expire within 48 hours. The app does not put transcripts,
    images, profiles, or IP addresses in that database.
 
-Planned future work is listed in the [roadmap](docs/ROADMAP.md).
+Feature details: [class video and whiteboard moments](docs/VIDEO-AND-WHITEBOARD.md),
+[printing](docs/PRINTING.md), and [the sample lecture](docs/SAMPLE-LECTURE.md). Planned future work is
+listed in the [roadmap](docs/ROADMAP.md).
 
 See [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md), [paid processing controls](docs/PAID-PROCESSING.md),
 and [request limits](docs/REQUEST-LIMITS.md) for the exact boundaries and failure behavior.

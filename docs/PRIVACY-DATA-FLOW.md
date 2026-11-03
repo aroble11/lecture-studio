@@ -21,3 +21,14 @@ their documented meaning is now the narrower provider selection above.
 The browser tests (`npm run test:e2e`) check the rendered disclosures on the capture screen and the
 privacy page, and that the open-weight badge appears on open-weight results. Provider-selection
 regression tests are in `npm run test:usage`; all calls are stubbed and spend no API credits.
+
+## Class videos and whiteboard moments
+
+- A class video stays in the browser. Only its sound is read out (in the browser) and sent to Meta for
+  transcription in the same PCM chunks as any other recording.
+- Whiteboard moments are found, captured, and lifted off the board in the browser. Only the drawings the
+  teacher keeps (up to four) are sent to Meta's image labeling, with the same lesson details as a
+  reference image. The video picker reminds teachers to check that no students are visible.
+- Videos larger than 100 MB are not saved in the browser; kept drawings are saved with the lecture.
+- The privacy page has a "Class videos — stay in your browser" entry, checked by the browser tests'
+  disclosure check together with the other routing entries.

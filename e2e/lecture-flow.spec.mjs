@@ -150,6 +150,8 @@ test("data-flow disclosures appear before upload and on the privacy page", async
   await expect(page.getByText(/does not make claims about provider retention, district approval, or legal compliance/)).toBeVisible();
   await expect(page.getByText(/deletes the saved teaching profile/)).toBeVisible();
   await expect(page.getByText(/Audio over 100 MB/)).toBeVisible();
+  await expect(page.getByText(/Class videos — stay in your browser/)).toBeVisible();
+  await expect(page.getByText(/only the drawings you choose to keep are sent to Meta/)).toBeVisible();
 });
 
 test("theme switch overrides the browser setting and is remembered", async ({ page }) => {
