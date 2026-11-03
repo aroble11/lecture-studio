@@ -65,6 +65,8 @@ counters separate. It should not be added manually for normal deployments.
    address (never the address itself) and expire within 48 hours. The app does not put transcripts,
    images, profiles, or IP addresses in that database.
 
+Planned future work is listed in the [roadmap](docs/ROADMAP.md).
+
 See [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md), [paid processing controls](docs/PAID-PROCESSING.md),
 and [request limits](docs/REQUEST-LIMITS.md) for the exact boundaries and failure behavior.
 
