@@ -140,8 +140,11 @@ export default function MaterialsView({
       <div role="tablist" aria-label="Materials" className="flex flex-wrap items-center gap-2">
         {studentTabs.map((t) => tabButton(t, false))}
         <span aria-hidden="true" className="mx-1 hidden h-7 w-px bg-line-strong sm:block" />
-        <span aria-hidden="true" className="text-sm font-bold text-sun-ink">For you:</span>
-        {TEACHER_TABS.map((t) => tabButton(t, true))}
+        {/* Keeps the "For you:" label on the same line as the teacher-only tabs when they wrap. */}
+        <div role="none" className="flex flex-wrap items-center gap-2">
+          <span aria-hidden="true" className="text-sm font-bold text-sun-ink">For you:</span>
+          {TEACHER_TABS.map((t) => tabButton(t, true))}
+        </div>
       </div>
 
       <div id="materials-panel" role="tabpanel" aria-labelledby={tabId(tab)} tabIndex={0} className="flex flex-col gap-5 rounded-2xl border border-line p-5 text-base leading-relaxed sm:p-7">
