@@ -28,7 +28,3 @@ Timeouts return the existing controlled operation error and can be retried by th
 
 Run `npm run test:timeouts` for offline provider-option, fallback-budget, sibling-cancellation,
 pre-cancelled ASR, busy-retry, and resume coverage. Tests use stubs and spend no API credits.
-
-Verified locally: 6 timeout/cancellation tests, 11 generation-validation tests, 4 operation-
-revision tests, and 113 existing offline tests passed; the one optional live Redis integration
-test was skipped. Lint, TypeScript, and the owner's production build passed.

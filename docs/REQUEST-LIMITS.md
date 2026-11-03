@@ -26,7 +26,3 @@ The reader does not impose a timeout on a slow uploader.
 Run `npm run test:usage` for stream cancellation, boundary values, misleading/missing headers,
 UTF-8 byte counting, malformed JSON, and all three route integrations. Providers are mocked;
 these request-limit tests do not spend API credits or contact Redis.
-
-Verified November 1, 2026: all 56 offline tests, lint, and TypeScript checks passed.
-The owner ran a successful production build in their terminal. The agent's execution
-environment encountered the previously observed Turbopack CSS-worker crash.

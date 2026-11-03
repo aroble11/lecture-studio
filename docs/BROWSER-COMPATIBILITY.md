@@ -33,7 +33,3 @@ For each available desktop browser (current Chrome or Edge, Firefox, and Safari 
 Record the browser name/version, operating system, audio format, and result. A real 60–90 minute
 lecture remains a separate manual endurance test; the automated timeline test validates chunk
 planning but does not establish browser memory usage or provider throughput.
-
-Verified locally: 160 offline tests passed and the one optional live Redis integration test was
-skipped. The seven focused audio/recording compatibility tests, lint, TypeScript, and the owner's
-production build passed. No paid provider calls were made during these checks.

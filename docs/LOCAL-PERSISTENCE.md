@@ -27,8 +27,3 @@ Hardening items 8 and 10 make browser persistence visible, revision-safe, and sa
 Run `npm run test:persistence` for offline write-failure, retry, revision-match, oversized-audio,
 profile-deletion, corrupt-session, optional-artifact recovery, and legacy-profile coverage. Tests use
 in-memory browser-storage doubles and no network services.
-
-Verified locally: 10 persistence tests, 6 timeout/cancellation tests, 11 generation-validation
-tests, 4 operation-revision tests, 3 privacy-copy tests, and 115 route/budget tests passed; the one
-optional live Redis integration test was skipped. Lint, TypeScript, and the owner's production build
-passed, including the static privacy route.

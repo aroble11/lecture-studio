@@ -70,7 +70,8 @@ It verifies the actual Lua script against racing admissions, daily quota, stale 
 It consumes a small number of Redis commands, not AI credits. Keep eviction disabled so stored
 counters survive until their intended expiry. Deploy/redeploy only after the integration passes.
 
-Verified November 1, 2026: 34 offline tests passed; the live Redis integration passed
-(including racing admissions, stale leases, quota exhaustion, and rollover). Lint and TypeScript
-checks passed. The owner also ran a successful production build in their terminal; the agent's
-execution environment encountered a Turbopack CSS worker crash.
+The optional live Redis integration test passed against the real Upstash store on November 1,
+2026, and again on November 2, 2026 after per-visitor allowances were added. It covers racing
+admissions, stale leases, quota exhaustion, daily rollover, and the per-visitor limit, using
+isolated temporary keys that it deletes. It never touches app counters or AI providers. Run it
+with `node --env-file=.env.local --test tests/usage-budget.test.mjs`.

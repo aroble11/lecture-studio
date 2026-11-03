@@ -31,8 +31,3 @@ Generated model output is independently validated as described in `GENERATED-MAT
 
 Run `npm run test:usage` for malformed fields, timing/count boundaries, actual image decoding,
 and checks that rejected inputs never use quota or call paid services.
-
-Verified locally: 113 offline tests passed, including actual JPEG/PNG/WebP decoding. Lint
-and TypeScript checks passed. The separate live Redis integration is skipped in this offline
-run; no budget logic changed in item 4. The owner ran a successful production build in their
-terminal, and item 4 was deployed.

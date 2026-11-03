@@ -34,7 +34,3 @@ teacher should review generated materials before classroom use.
 Run `npm run test:generation` for offline validator, fallback/retry, blank repair, timestamp,
 answer-shuffle, diagram, and completion-state coverage. Tests use provider stubs and spend no API
 credits.
-
-Verified locally: 10 generation-validation tests and 113 existing offline tests passed; the one
-optional live Redis integration test was skipped. Lint, TypeScript, and the owner's production
-build passed.

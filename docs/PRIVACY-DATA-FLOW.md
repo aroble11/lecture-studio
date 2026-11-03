@@ -20,8 +20,3 @@ their documented meaning is now the narrower provider selection above.
 
 Run npm run test:privacy for disclosure-copy coverage. Provider-selection regression tests are in
 npm run test:usage; all calls are stubbed and spend no API credits.
-
-Verified locally: 3 privacy-copy tests, 115 existing offline route/budget tests, 11 generation-
-validation tests, 10 persistence tests, 6 timeout/cancellation tests, and 4 operation-revision tests
-passed; the one optional live Redis integration test was skipped. Lint, TypeScript, and the owner's
-production build passed, including the static privacy route.

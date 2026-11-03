@@ -20,7 +20,3 @@ current lecture.
 
 Run `npm run test:state` for offline revision, cancellation, late-response, and cleanup coverage.
 The tests make no network requests and use no API credits.
-
-Verified locally: 4 operation-revision tests, 10 generation-validation tests, and 113 existing
-offline tests passed; the one optional live Redis integration test was skipped. Lint, TypeScript,
-and the owner's production build passed.

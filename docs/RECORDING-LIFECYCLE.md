@@ -17,7 +17,5 @@ Run `npm run test:recording` for duration and byte boundary checks, active-recor
 cleanup coverage, and capture-UI lifecycle assertions. These tests use local doubles and require no
 microphone or network access.
 
-Verified locally: 3 recording tests plus 149 existing offline tests passed; the one optional live
-Redis integration test was skipped. Lint, TypeScript, and the owner's production build passed,
-including the static privacy route. A real-browser microphone-permission acceptance check remains a
-separate manual test.
+A real-browser microphone-permission acceptance check remains a separate manual test (see
+`BROWSER-COMPATIBILITY.md`).

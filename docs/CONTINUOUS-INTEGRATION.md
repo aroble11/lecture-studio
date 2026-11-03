@@ -19,10 +19,8 @@ The action versions were checked against the official `actions/checkout` and `ac
 release pages on November 1, 2026. The CI configuration has regression tests in
 `tests/ci-config.test.mjs`.
 
-Verified locally after the clean-checkout type-generation fix: `npm test` passed 156 tests with zero
-failures; the one optional live Redis integration test was skipped. The owner's initial unified run
-passed all 155 tests that existed before the added type-generation regression assertion. Lint and
-TypeScript also passed. The workflow's production-build step is verified by GitHub Actions after push.
+The GitHub Actions run for each push is the source of truth for current results. These docs
+intentionally do not record test counts, which go stale as tests are added.
 
 Dependency-audit scope and the current development-only exception are documented in
 `docs/DEPENDENCY-SECURITY.md`.
