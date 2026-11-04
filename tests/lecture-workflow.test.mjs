@@ -152,3 +152,44 @@ test("renaming a label trims it, ignores blanks, and leaves other labels alone",
   assert.equal(w.renameDiagramItem(items, 1, "   "), items);
   assert.equal(w.renameDiagramItem(items, 2, "y".repeat(100))[1].label.length, w.MAX_LABEL_CHARS);
 });
+
+test("adding a label takes the next number, lands on the picture, and stops at six", () => {
+  const box = { x1: 0, y1: 0, x2: 1, y2: 1 };
+  let items = [item(1, "rotor", box), item(2, "stator", box)];
+  items = w.addDiagramItem(items);
+  assert.equal(json(items.map((i) => i.n)), json([1, 2, 3]));
+  assert.equal(items[2].label, "Label 3");
+  for (let k = 0; k < 10; k++) items = w.addDiagramItem(items);
+  assert.equal(items.length, w.MAX_DIAGRAM_ITEMS);
+  assert.equal(w.addDiagramItem(items), items, "a full picture is unchanged");
+  for (const added of items.slice(2)) {
+    assert.ok(added.box.x1 >= 0 && added.box.x2 <= 1000 && added.box.y1 >= 0 && added.box.y2 <= 1000);
+    assert.ok(added.box.x2 > added.box.x1 && added.box.y2 > added.box.y1);
+  }
+  assert.equal(new Set(items.map((i) => `${i.box.x1},${i.box.y1}`)).size >= 4, true, "added markers don't stack");
+});
+
+test("removing a label renumbers the rest in order and never removes the last one", () => {
+  const box = { x1: 0, y1: 0, x2: 1, y2: 1 };
+  const items = [item(1, "a", box), item(2, "b", box), item(3, "c", box), item(4, "d", box)];
+  const removed = w.removeDiagramItem(items, 2);
+  assert.equal(json(removed.map((i) => [i.n, i.label])), json([[1, "a"], [2, "c"], [3, "d"]]));
+  assert.equal(w.removeDiagramItem(items, 9), items, "an unknown number changes nothing");
+  const one = [item(1, "only", box)];
+  assert.equal(w.removeDiagramItem(one, 1), one, "a drawing keeps at least one label");
+});
+
+test("saved lectures accept as many labels as the editor allows", () => {
+  const store = fs.readFileSync("lib/session-store.ts", "utf8");
+  assert.match(store, new RegExp(`array\\(diagram\\.items, \`\\$\\{field\\}\\.items\`, ${w.MAX_DIAGRAM_ITEMS}\\)`));
+  assert.match(store, new RegExp(`number\\(item\\.n, \`\\$\\{field\\}\\.items\\[\\$\\{i\\}\\]\\.n\`, 1, ${w.MAX_DIAGRAM_ITEMS}, true\\)`));
+});
+
+test("only whiteboard drawings can add or remove labels; the picture activity keeps its generated notes in step", () => {
+  const materials = fs.readFileSync("app/components/MaterialsView.tsx", "utf8");
+  const diagramView = fs.readFileSync("app/components/DiagramView.tsx", "utf8");
+  const editor = fs.readFileSync("app/components/LabelEditor.tsx", "utf8");
+  assert.match(materials, /<LabelEditor src=\{moment\.image\.dataUrl\}[^>]*canAddRemove/);
+  assert.doesNotMatch(diagramView, /canAddRemove/);
+  assert.match(editor, /Type a name for number \$\{blank\.n\}/, "a blank name blocks Done instead of saving a blank");
+});

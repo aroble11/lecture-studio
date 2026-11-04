@@ -340,7 +340,7 @@ function BoardDrawing({ moment, answers, wordBank, onItemsChange }: { moment: Bo
   if (editing && onItemsChange) {
     return (
       <div className="mt-4">
-        <LabelEditor src={moment.image.dataUrl} alt={alt} items={items} onChange={onItemsChange} onDone={() => setEditing(false)} />
+        <LabelEditor src={moment.image.dataUrl} alt={alt} items={items} canAddRemove onChange={onItemsChange} onDone={() => setEditing(false)} />
       </div>
     );
   }

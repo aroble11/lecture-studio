@@ -156,3 +156,25 @@ export function renameDiagramItem(items: DiagramItem[], n: number, label: string
   const clean = label.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
   return clean ? items.map((item) => (item.n === n ? { ...item, label: clean } : item)) : items;
 }
+
+/** Most numbered labels a picture can have (saved lectures accept numbers 1–6). */
+export const MAX_DIAGRAM_ITEMS = 6;
+
+/**
+ * Add a numbered label in the middle of the picture for the teacher to drag and name. Numbers stay 1..k, so the
+ * new label takes the next number. A full picture is returned unchanged.
+ */
+export function addDiagramItem(items: DiagramItem[]): DiagramItem[] {
+  if (items.length >= MAX_DIAGRAM_ITEMS) return items;
+  const n = items.length + 1;
+  // Step each new marker down and right a little so several added at once don't stack on one spot.
+  const offset = (n - 1) * 30;
+  const x1 = Math.min(940, 440 + offset), y1 = Math.min(940, 380 + offset);
+  return [...items, { n, label: `Label ${n}`, phrase: "", box: { x1, y1, x2: x1 + 60, y2: y1 + 60 }, score: 1 }];
+}
+
+/** Remove one numbered label and renumber the rest 1..k in their current order. The last label is never removed. */
+export function removeDiagramItem(items: DiagramItem[], n: number): DiagramItem[] {
+  if (items.length <= 1 || !items.some((item) => item.n === n)) return items;
+  return [...items].sort((a, b) => a.n - b.n).filter((item) => item.n !== n).map((item, i) => ({ ...item, n: i + 1 }));
+}
