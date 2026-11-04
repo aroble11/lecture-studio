@@ -44,8 +44,9 @@ itself never leaves the browser.
   place up to six parts. SAM is skipped because it cannot find handwriting.
 - Drawings appear under the guided-notes section whose start time is the latest at or before the moment.
   Boards that are mostly writing are not paired, so the notes are not repeated.
-- Teachers can move and rename the numbered labels (**Edit labels**); the student view and student print
-  show numbered blanks.
+- Teachers can move, rename, add, and remove the numbered labels (**Edit labels**; up to six per drawing,
+  and a drawing always keeps at least one). Removing a label renumbers the rest. The student view and student
+  print show one numbered blank per label.
 
 ## Tests
 

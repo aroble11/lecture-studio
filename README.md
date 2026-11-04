@@ -34,6 +34,47 @@ open-weight option and Upstash Redis for usage limits); see [Local setup](#local
 **Starting point:** the repository was created on October 27, and the app began from the standard
 `create-next-app` template (commit `7296a6d`, October 28). Everything else was built during the event.
 
+### At a glance
+
+**Impact: who it helps**
+
+- Built from a teacher's own classroom: materials come from the lesson that was *actually taught*, not a
+  generic topic, so they match what students heard.
+- Uses that matter after class: notes for absent students, a copy of notes as an IEP/504 accommodation,
+  review days, later periods, and reflection (teacher-only pacing and content-gap feedback).
+- The teacher stays in charge: everything (transcript, labels, kept drawings) can be edited before printing
+  a student copy (no answers) and a teacher copy (answer key).
+- Privacy by design: the teacher's voice only, never students; a class video never leaves the browser.
+
+**Use of Meta AI tooling: five models in one pipeline** (details in the table below)
+
+- **Muse Voice Transcribe**, a realtime model, driven as a parallel batch transcriber for recorded lectures.
+- **Muse Wonder** writes the materials and plans picture labels; **Muse Spark** is the tested fallback.
+- **SAM 3.1** turns Wonder's rough picks into precise boxes on a reference picture.
+- **Muse Wonder (board mode)** names the parts of the teacher's own whiteboard drawings.
+- **Muse Spark Open** on Baseten: an open-weight option for materials generation, with no Meta fallback.
+
+**Technical depth and execution**
+
+- Reads the sound out of a class video up to 8 GB in the browser (a 924 MB, 6:51 lecture was transcribed in
+  71 s) and finds and lifts whiteboard drawings locally, handling erases, the teacher in front of the board,
+  glare, and camera auto-framing.
+- Model output is strictly validated and safely repaired; a failed rule is named in the retry, and invalid
+  output never reaches a teacher.
+- Safe to leave open to the public: request limits, input validation, per-visitor and site-wide allowances
+  (keyed by a rotating hash, never an IP address), and an emergency switch for paid processing.
+- One step at a time with a live progress list; light and dark themes; works at phone width; keyboard
+  accessible.
+- 238 offline tests and 7 browser tests against the production build, run by GitHub Actions on every push;
+  19 focused docs (see [Documentation](#documentation)).
+
+**Try it**
+
+- Live app: https://lecture-studio-nine.vercel.app/ — **Try a sample lecture** shows finished materials
+  with no account or keys.
+- Known limits and next steps are in the [roadmap](docs/ROADMAP.md) (for example, tested in Chrome and
+  Edge on Windows so far).
+
 **Which Meta model does what:**
 
 | Step | Meta model | Where |
@@ -55,7 +96,12 @@ All model IDs live in `lib/config.ts`. How the pieces fit:
 - **Whiteboard moments are found for free.** The browser picks the fullest board before each erase and
   lifts the drawing (teacher, glare, and background removed); only drawings the teacher keeps go to Wonder.
 - **Output that teachers can trust.** Generated materials are strictly validated and repaired; a failed
-  rule is named in the retry, and output that still fails never reaches the screen.
+  rule is named in the retry, and output that still fails never reaches the screen. The teacher reviews and
+  edits everything before it is printed ([generated materials](docs/GENERATED-MATERIALS.md)).
+- **Reasoning effort chosen by measurement.** For Muse Spark Open, the default reasoning effort took 87 s on
+  a 32-second test clip; at low effort, output for a 2:21 lecture was accepted 3 of 3 times in 9–11 s (each
+  after one small repair), so the open-weight option runs at low effort (`lib/config.ts`).
+- **Model terms.** The app never uses `-contributor` model variants, whose inputs Meta may use for training.
 
 ## Requirements
 
@@ -119,12 +165,36 @@ counters separate. It should not be added manually for normal deployments.
    address (never the address itself) and expire within 48 hours. The app does not put transcripts,
    images, profiles, or IP addresses in that database.
 
-Feature details: [class video and whiteboard moments](docs/VIDEO-AND-WHITEBOARD.md),
-[printing](docs/PRINTING.md), and [the sample lecture](docs/SAMPLE-LECTURE.md). Planned future work is
-listed in the [roadmap](docs/ROADMAP.md).
+## Documentation
 
-See [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md), [paid processing controls](docs/PAID-PROCESSING.md),
-and [request limits](docs/REQUEST-LIMITS.md) for the exact boundaries and failure behavior.
+**Features**
+
+- [Class video and whiteboard moments](docs/VIDEO-AND-WHITEBOARD.md): reading a video's sound, finding and
+  lifting board drawings, labeling and pairing them with the notes.
+- [Microphone recording](docs/RECORDING-LIFECYCLE.md): permission, limits, Pause/Continue, Save recording.
+- [Generated materials](docs/GENERATED-MATERIALS.md): how model output is checked, repaired, or rejected.
+- [Printing](docs/PRINTING.md): student and teacher copies.
+- [The sample lecture](docs/SAMPLE-LECTURE.md): what it contains and how to make or replace it.
+- [Saving in the browser](docs/LOCAL-PERSISTENCE.md): what is kept between visits and how damaged saves are
+  handled.
+
+**Privacy, cost, and safety**
+
+- [Privacy and data flow](docs/PRIVACY-DATA-FLOW.md): what goes to Meta or Baseten and what never leaves the
+  browser.
+- [Paid processing controls](docs/PAID-PROCESSING.md): allowances, the emergency switch, and the usage store.
+- [Request limits](docs/REQUEST-LIMITS.md) and [input validation](docs/INPUT-VALIDATION.md): what the
+  server accepts before any paid work starts.
+- [Timeouts and retries](docs/OPERATION-TIMEOUTS.md) and [stale operations](docs/STALE-OPERATIONS.md): how
+  slow, busy, or replaced work is handled.
+
+**Quality and operations**
+
+- [Continuous integration](docs/CONTINUOUS-INTEGRATION.md), [dependency security](docs/DEPENDENCY-SECURITY.md),
+  and [local fonts](docs/LOCAL-FONTS.md).
+- [Browser compatibility](docs/BROWSER-COMPATIBILITY.md) and [deployed browser acceptance](docs/BROWSER-ACCEPTANCE.md).
+- [Live provider smoke test](docs/LIVE-PROVIDER-SMOKE.md): a manual, paid end-to-end check, never run in CI.
+- [Roadmap](docs/ROADMAP.md): deferred features and known limits.
 
 ## Quality checks
 
@@ -137,7 +207,9 @@ npm run test:e2e
 ```
 
 `npm test` runs the offline suite and does not make paid provider calls. One real Redis integration
-test runs only when the two `LIMITS_KV_REST_API_*` variables are available. The root-level
+test runs only when the two `LIMITS_KV_REST_API_*` variables are available; to run it with the values in
+`.env.local`, use `node --env-file=.env.local --test tests/usage-budget.test.mjs` (it uses temporary keys and
+never touches the app's usage counters). The root-level
 `test-*.mjs` files are manual provider probes and are intentionally excluded from `npm test`.
 
 `npm run test:e2e` runs browser tests against the production build (run `npm run build` first). It
