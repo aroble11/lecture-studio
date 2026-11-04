@@ -770,9 +770,7 @@ export default function LectureCapture() {
       <header className="border-b border-line bg-surface print:hidden">
         <div className="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5 text-ink">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#ffe8a3] text-apple">
-              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7c-1.5-1-4-1.2-5.6.3C4.6 9 4.8 12.6 6.3 15.4 7.5 17.7 9.2 20 11 19.6c.6-.1.9-.4 1-.4s.4.3 1 .4c1.8.4 3.5-1.9 4.7-4.2 1.5-2.8 1.7-6.4-.1-8.1C16 5.8 13.5 6 12 7z" /><path d="M12 7c0-1.8.8-3.2 2.4-4" /></svg>
-            </span>
+            <svg aria-hidden="true" width="40" height="40" viewBox="0 0 64 64" className="shrink-0"><rect width="64" height="64" rx="14" fill="#2457d0" /><rect x="21" y="6" width="31" height="44" rx="3.5" fill="#9db5ee" /><rect x="12" y="13" width="33" height="45" rx="3.5" fill="#fff" /><rect x="17" y="21" width="20" height="3.5" rx="1.75" fill="#8a93aa" /><rect x="17" y="28" width="23" height="3.5" rx="1.75" fill="#8a93aa" /><rect x="17" y="36" width="23" height="9" rx="2" fill="#ffe08a" /><rect x="17" y="43" width="23" height="3" rx="1.5" fill="#1e2433" /></svg>
             <span className="text-xl font-extrabold tracking-tight">Lecture Studio</span>
           </Link>
           <nav aria-label="Main" className="flex flex-wrap items-center gap-2">

@@ -15,9 +15,16 @@ const nunito = localFont({
   display: "swap",
 });
 
+const description = "Lecture in, handouts out: guided notes, quizzes, and review built from what you actually said in class.";
+
+// The share image and icons are files in app/ (opengraph-image.png, twitter-image.png, icon.svg, apple-icon.png,
+// favicon.ico); metadataBase turns their paths into the absolute URLs that link previews require.
 export const metadata: Metadata = {
+  metadataBase: new URL("https://lecture-studio-nine.vercel.app"),
   title: "Lecture Studio",
-  description: "Lecture in, handouts out: guided notes, quizzes, and review built from what you actually said in class.",
+  description,
+  openGraph: { type: "website", siteName: "Lecture Studio", title: "Lecture Studio: Lecture In, Handouts Out", description },
+  twitter: { card: "summary_large_image", title: "Lecture Studio: Lecture In, Handouts Out", description },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
