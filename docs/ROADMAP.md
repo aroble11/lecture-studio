@@ -51,6 +51,23 @@ deadline. Teachers can record with the Windows Camera app or a phone and upload 
    permission, stop, and cleanup rules as `docs/RECORDING-LIFECYCLE.md`.
 6. **Tests:** lifecycle doubles for both recorders, and manual checks in Chrome/Edge, Firefox, and Safari.
 
+## Recover whiteboard strokes the automatic cleanup drops
+
+A per-drawing **Show original (skip cleanup)** toggle shipped on November 4, 2026 (beside **Edit labels**):
+the lift keeps the cropped-but-uncleaned frame and the checkbox swaps the shown and printed image to it, so a
+teacher can recover faint strokes the brightness cleanup removed. It is display-only and opt-in per board.
+
+Still deferred, because each is larger and was found too close to the deadline to add and test safely:
+
+1. **Stroke-preserving cleanup:** make the local-brightness binarization in `lib/board-frames.ts` adaptive
+   (e.g. Sauvola with a safety margin), or back off cleaning in any patch where stroke detection sees writing
+   in the raw crop but not the cleaned one, so faint strokes are not dropped in the first place.
+2. **Fill patches hidden behind the teacher:** today the lift *skips* any nearby frame whose board edge moved
+   (camera auto-framing). Registering those frames (a homography) and warping them into the chosen moment would
+   let occluded patches be filled from more of the footage — the one case the "show original" toggle cannot fix,
+   because those pixels were never captured.
+3. **Single-clean-frame pick:** let the teacher choose one fully-visible frame and skip compositing for that
+   board, which sidesteps both failure modes when a clean end-of-lecture frame exists.
 ## Other ideas
 
 - **Print a single section:** a "Print: Everything / Just this tab" choice beside the print buttons. Printing

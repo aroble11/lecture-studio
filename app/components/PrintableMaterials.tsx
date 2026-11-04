@@ -6,7 +6,7 @@ import type { DiagramResult } from "@/lib/diagram";
 import { forStudents, printSections, type PrintCopy } from "@/lib/export-plan";
 import type { GenerateResult } from "@/lib/materials";
 import { computePacing } from "@/lib/pacing";
-import type { BoardMoment } from "@/lib/session-store";
+import { boardImage, type BoardMoment } from "@/lib/session-store";
 import MarkerImage from "./MarkerImage";
 
 const LETTERS = "ABCDEFGH";
@@ -88,7 +88,7 @@ export default function PrintableMaterials({
               </ol>
               {drawings.filter((b) => sectionIndexForTime(m.guidedNotes.sections, b.timeMs) === i).map((b) => (
                 <figure key={b.timeMs} className="mt-3 flex break-inside-avoid items-start gap-4">
-                  <MarkerImage src={b.image.dataUrl} alt={b.diagram?.summary ?? "Whiteboard drawing"} items={b.diagram?.items ?? []} size="sm" className="w-[60%] shrink-0" />
+                  <MarkerImage src={boardImage(b).dataUrl} alt={b.diagram?.summary ?? "Whiteboard drawing"} items={b.diagram?.items ?? []} size="sm" className="w-[60%] shrink-0" />
                   <figcaption>
                     <p className="font-bold">From the board{teacher ? "" : " — label each number"}</p>
                     {!teacher && m.guidedNotes.wordBank.length > 0 && (

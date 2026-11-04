@@ -12,7 +12,12 @@ export const MAX_SAVED_AUDIO_BYTES = 100 * 1024 * 1024;
 export type SavedAudio = { blob: Blob; label: string; /** Missing on legacy saves. */ revision?: string };
 export type ResultSource = { turns: Turn[]; durationMs: number; context: LessonContext };
 /** A whiteboard frame the teacher kept from a class video. `diagram` is null until labeling finishes (or if it failed). */
-export type BoardMoment = { timeMs: number; image: PreparedImage; diagram: DiagramResult | null };
+export type BoardMoment = { timeMs: number; image: PreparedImage; diagram: DiagramResult | null; original?: PreparedImage; skipCleanup?: boolean };
+
+/** The board image to show or print: the uncleaned "original" crop when the teacher skipped cleanup, else the cleaned crop. */
+export function boardImage(m: BoardMoment): PreparedImage {
+  return m.skipCleanup && m.original ? m.original : m.image;
+}
 /** Most whiteboard moments a lecture keeps (each is one labeling request). */
 export const MAX_BOARD_MOMENTS = 4;
 
@@ -109,7 +114,11 @@ function cleanBoardMoments(value: unknown): BoardMoment[] {
     previous = timeMs;
     const { name: _name, ...image } = cleanImage({ ...record(moment.image, `boardMoments[${i}].image`), name: "board" }, `boardMoments[${i}].image`);
     void _name;
-    return { timeMs, image, diagram: moment.diagram === null || moment.diagram === undefined ? null : cleanDiagram(moment.diagram, `boardMoments[${i}].diagram`) };
+    const original = moment.original === null || moment.original === undefined
+      ? undefined
+      : (() => { const { name: _n, ...img } = cleanImage({ ...record(moment.original, `boardMoments[${i}].original`), name: "board" }, `boardMoments[${i}].original`); void _n; return img; })();
+    const diagram = moment.diagram === null || moment.diagram === undefined ? null : cleanDiagram(moment.diagram, `boardMoments[${i}].diagram`);
+    return { timeMs, image, diagram, ...(original ? { original } : {}), ...(moment.skipCleanup === true ? { skipCleanup: true as const } : {}) };
   });
 }
 

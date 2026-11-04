@@ -6,7 +6,7 @@ import type { DiagramItem, DiagramResult } from "@/lib/diagram";
 import type { GenerateResult } from "@/lib/materials";
 import { sectionIndexForTime } from "@/lib/board-frames";
 import { computePacing } from "@/lib/pacing";
-import type { BoardMoment } from "@/lib/session-store";
+import { boardImage, type BoardMoment } from "@/lib/session-store";
 import DiagramView from "./DiagramView";
 import LabelEditor from "./LabelEditor";
 import MarkerImage from "./MarkerImage";
@@ -26,6 +26,7 @@ export default function MaterialsView({
   boardMoments = [],
   outdated = false,
   onBoardItemsChange,
+  onBoardSkipCleanupChange,
   onDiagramItemsChange,
   onPrint,
 }: {
@@ -35,6 +36,8 @@ export default function MaterialsView({
   outdated?: boolean;
   /** Teacher moved or renamed the numbered labels on a whiteboard drawing. */
   onBoardItemsChange?: (timeMs: number, items: DiagramItem[]) => void;
+  /** Teacher toggled "show original (skip cleanup)" on a whiteboard drawing. */
+  onBoardSkipCleanupChange?: (timeMs: number, value: boolean) => void;
   /** Teacher moved or renamed the numbered labels in the label-the-picture activity. */
   onDiagramItemsChange?: (items: DiagramItem[]) => void;
   result: GenerateResult;
@@ -193,7 +196,7 @@ export default function MaterialsView({
                     );
                   })}
                 </ol>
-                {drawingsFor(i).map((b) => <BoardDrawing key={b.timeMs} moment={b} answers={answers} wordBank={(m.guidedNotes.wordBank?.length ?? 0) > 0} onItemsChange={onBoardItemsChange && ((items) => onBoardItemsChange(b.timeMs, items))} />)}
+                {drawingsFor(i).map((b) => <BoardDrawing key={b.timeMs} moment={b} answers={answers} wordBank={(m.guidedNotes.wordBank?.length ?? 0) > 0} onItemsChange={onBoardItemsChange && ((items) => onBoardItemsChange(b.timeMs, items))} onSkipCleanupChange={onBoardSkipCleanupChange && ((v) => onBoardSkipCleanupChange(b.timeMs, v))} />)}
               </div>
             ))}
           </div>
@@ -333,20 +336,20 @@ export default function MaterialsView({
 }
 
 /** A kept whiteboard drawing with its numbered labels, shown beside the matching notes. Labels can be edited. */
-function BoardDrawing({ moment, answers, wordBank, onItemsChange }: { moment: BoardMoment; answers: boolean; wordBank: boolean; onItemsChange?: (items: DiagramItem[]) => void }) {
+function BoardDrawing({ moment, answers, wordBank, onItemsChange, onSkipCleanupChange }: { moment: BoardMoment; answers: boolean; wordBank: boolean; onItemsChange?: (items: DiagramItem[]) => void; onSkipCleanupChange?: (value: boolean) => void }) {
   const [editing, setEditing] = useState(false);
   const items = moment.diagram?.items ?? [];
   const alt = moment.diagram?.summary ?? "Whiteboard drawing";
   if (editing && onItemsChange) {
     return (
       <div className="mt-4">
-        <LabelEditor src={moment.image.dataUrl} alt={alt} items={items} canAddRemove onChange={onItemsChange} onDone={() => setEditing(false)} />
+        <LabelEditor src={boardImage(moment).dataUrl} alt={alt} items={items} canAddRemove onChange={onItemsChange} onDone={() => setEditing(false)} />
       </div>
     );
   }
   return (
     <figure className="mt-4 flex flex-col gap-3 rounded-2xl border border-line bg-tint-soft p-3 sm:flex-row sm:items-start">
-      <MarkerImage src={moment.image.dataUrl} alt={alt} items={items} size="sm" className="w-full shrink-0 sm:w-[60%]" />
+      <MarkerImage src={boardImage(moment).dataUrl} alt={alt} items={items} size="sm" className="w-full shrink-0 sm:w-[60%]" />
       <figcaption className="flex flex-col gap-2 text-[15px]">
         <p className="font-bold">From the board at {formatTime(moment.timeMs)}{answers ? "" : " — label each number"}</p>
         {!answers && wordBank && (
@@ -364,6 +367,12 @@ function BoardDrawing({ moment, answers, wordBank, onItemsChange }: { moment: Bo
           <button type="button" onClick={() => setEditing(true)} className="inline-flex min-h-11 items-center self-start rounded-xl border border-line-strong bg-surface px-4 text-[15px] font-bold text-ink hover:border-brand hover:text-brand">
             Edit labels
           </button>
+        )}
+        {moment.original && onSkipCleanupChange && (
+          <label className="inline-flex items-center gap-2 self-start text-[15px] font-semibold text-muted">
+            <input type="checkbox" checked={moment.skipCleanup ?? false} onChange={(e) => onSkipCleanupChange(e.target.checked)} className="h-4 w-4 accent-brand" />
+            Show original (skip cleanup)
+          </label>
         )}
       </figcaption>
     </figure>

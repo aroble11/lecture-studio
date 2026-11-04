@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { clearProfile, EMPTY_PROFILE, isEmptyProfile, saveProfile, type TeacherProfile } from "@/lib/profile-store";
 
-const inputClass = "mt-1.5 w-full rounded-xl border border-field bg-surface px-3.5 py-2.5 text-base font-semibold text-ink placeholder:font-normal placeholder:text-subtle focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25";
+const inputClass = "mt-1.5 w-full rounded-xl border border-field bg-surface px-3.5 py-2.5 text-base font-semibold text-ink placeholder:font-normal placeholder:text-subtle/70 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25";
 
 /** Saved teacher profile: a header button that opens a dialog. It fills in subject/grade and shapes every generation. */
 export default function ProfileCard({

@@ -350,7 +350,7 @@ export async function suggestBoardMoments(file: Blob, { signal, onProgress }: { 
   }
 }
 
-export type LiftedMoment = { timeMs: number; image: PreparedImage; lifted: boolean };
+export type LiftedMoment = { timeMs: number; image: PreparedImage; original?: PreparedImage; lifted: boolean };
 
 /**
  * Lift the drawing at each time: combine nearby frames so a person in front of the board is replaced by what
@@ -421,13 +421,22 @@ export async function liftMoments(file: Blob, moments: { timeMs: number; sinceMs
         results.push({ timeMs, image: await prepareImage(await canvasBlob(canvas)), lifted: false });
         continue;
       }
+      const cropW = (bounds.c1 - bounds.c0 + 1) * LIFT_BLOCK;
+      const cropH = (bounds.r1 - bounds.r0 + 1) * LIFT_BLOCK;
+      const cropToBlob = (frame: Uint8ClampedArray<ArrayBuffer>) => {
+        g.putImageData(new ImageData(frame, width, height), 0, 0);
+        const crop = document.createElement("canvas");
+        crop.width = cropW;
+        crop.height = cropH;
+        crop.getContext("2d")?.drawImage(canvas, bounds.c0 * LIFT_BLOCK, bounds.r0 * LIFT_BLOCK, cropW, cropH, 0, 0, cropW, cropH);
+        return canvasBlob(crop);
+      };
+      // Original: the lifted-and-cropped frame without the whitening, so faint strokes the cleanup would drop
+      // are kept. prepareImage flattens the unseen (transparent) patches onto white, like the cleaned crop.
+      const original = await prepareImage(await cropToBlob(composite));
       const cleaned = cleanBoard(composite, width, height, LIFT_BLOCK, seen);
-      g.putImageData(new ImageData(cleaned, width, height), 0, 0);
-      const crop = document.createElement("canvas");
-      crop.width = (bounds.c1 - bounds.c0 + 1) * LIFT_BLOCK;
-      crop.height = (bounds.r1 - bounds.r0 + 1) * LIFT_BLOCK;
-      crop.getContext("2d")?.drawImage(canvas, bounds.c0 * LIFT_BLOCK, bounds.r0 * LIFT_BLOCK, crop.width, crop.height, 0, 0, crop.width, crop.height);
-      results.push({ timeMs, image: await prepareImage(await canvasBlob(crop)), lifted: true });
+      const image = await prepareImage(await cropToBlob(cleaned));
+      results.push({ timeMs, image, original, lifted: true });
     }
     return results;
   } finally {

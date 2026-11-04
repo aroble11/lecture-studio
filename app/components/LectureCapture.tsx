@@ -43,7 +43,7 @@ type GenStatus =
 const cardClass = "flex flex-col gap-5 rounded-3xl border border-line bg-surface p-5 sm:p-7";
 const tileClass = "flex flex-col items-start gap-2.5 rounded-[20px] p-5 text-left disabled:opacity-40 sm:p-6";
 const labelClass = "text-[15px] font-bold";
-const inputClass = "mt-1.5 w-full rounded-xl border border-field bg-surface px-3.5 py-2.5 text-base font-semibold text-ink placeholder:font-normal placeholder:text-subtle focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-tint disabled:opacity-60";
+const inputClass = "mt-1.5 w-full rounded-xl border border-field bg-surface px-3.5 py-2.5 text-base font-semibold text-ink placeholder:font-normal placeholder:text-subtle/70 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-tint disabled:opacity-60";
 const primaryButtonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-brand px-6 text-base font-extrabold text-on-brand hover:bg-brand-dark disabled:opacity-40";
 const secondaryButtonClass = "inline-flex min-h-11 items-center justify-center rounded-xl border border-line-strong bg-surface px-4 text-[15px] font-bold text-ink hover:border-brand hover:text-brand";
 const newAudioRevision = () => typeof globalThis.crypto.randomUUID === "function"
@@ -359,9 +359,9 @@ export default function LectureCapture() {
     });
   }
 
-  function keepMoment(timeMs: number, image: BoardMoment["image"]) {
+  function keepMoment(timeMs: number, image: BoardMoment["image"], original?: BoardMoment["image"]) {
     if (boardMoments.length >= MAX_BOARD_MOMENTS || boardMoments.some((m) => m.timeMs === timeMs)) return;
-    setBoardMoments((list) => [...list, { timeMs, image, diagram: null }].sort((a, b) => a.timeMs - b.timeMs));
+    setBoardMoments((list) => [...list, { timeMs, image, original, diagram: null }].sort((a, b) => a.timeMs - b.timeMs));
     checkMoment(timeMs, image);
   }
 
@@ -1249,6 +1249,7 @@ export default function LectureCapture() {
           boardMoments={boardMoments}
           outdated={materialsOutdated(turns, resultSource)}
           onBoardItemsChange={(timeMs, items) => setBoardMoments((list) => list.map((b) => (b.timeMs === timeMs && b.diagram ? { ...b, diagram: { ...b.diagram, items } } : b)))}
+          onBoardSkipCleanupChange={(timeMs, value) => setBoardMoments((list) => list.map((b) => (b.timeMs === timeMs ? { ...b, skipCleanup: value } : b)))}
           onDiagramItemsChange={(items) => setResultDiagram((d) => (d ? { ...d, result: { ...d.result, items } } : d))}
           onPrint={(copy) => setPrintRequest((r) => ({ copy, id: (r?.id ?? 0) + 1 }))}
         />}

@@ -26,12 +26,12 @@ export default function BoardMoments({
   moments: BoardMoment[];
   checks: Record<number, MomentCheck>;
   disabled: boolean;
-  onKeep: (timeMs: number, image: PreparedImage) => void;
+  onKeep: (timeMs: number, image: PreparedImage, original?: PreparedImage) => void;
   onRemove: (timeMs: number) => void;
   onRetry: (timeMs: number) => void;
 }) {
   const [scan, setScan] = useState<Scan>({ kind: "idle" });
-  const [suggestions, setSuggestions] = useState<{ timeMs: number; image: PreparedImage }[]>([]);
+  const [suggestions, setSuggestions] = useState<{ timeMs: number; image: PreparedImage; original?: PreparedImage }[]>([]);
   const everClean = useRef<Uint8Array | null>(null);
   const [scannedFor, setScannedFor] = useState<Blob | null>(video);
   const [adding, setAdding] = useState(false);
@@ -79,7 +79,7 @@ export default function BoardMoments({
     try {
       const timeMs = Math.round(player.currentTime * 1000);
       const [frame] = await liftMoments(video, [{ timeMs }], everClean.current);
-      if (frame) onKeep(frame.timeMs, frame.image);
+      if (frame) onKeep(frame.timeMs, frame.image, frame.original);
     } catch (err) {
       setScan({ kind: "error", message: err instanceof Error ? err.message : "That moment couldn't be captured." });
     } finally {
@@ -89,7 +89,7 @@ export default function BoardMoments({
 
   const keptTimes = new Set(moments.map((m) => m.timeMs));
   const cards = [
-    ...moments.map((m) => ({ timeMs: m.timeMs, image: m.image })),
+    ...moments.map((m) => ({ timeMs: m.timeMs, image: m.image, original: m.original })),
     ...suggestions.filter((s) => !keptTimes.has(s.timeMs)),
   ].sort((a, b) => a.timeMs - b.timeMs);
   const full = moments.length >= MAX_BOARD_MOMENTS;
@@ -138,7 +138,7 @@ export default function BoardMoments({
                         Remove
                       </button>
                     ) : (
-                      <button onClick={() => onKeep(card.timeMs, card.image)} disabled={disabled || full} className="min-h-11 rounded-xl bg-brand px-4 text-sm font-extrabold text-on-brand hover:bg-brand-dark disabled:opacity-40">
+                      <button onClick={() => onKeep(card.timeMs, card.image, card.original)} disabled={disabled || full} className="min-h-11 rounded-xl bg-brand px-4 text-sm font-extrabold text-on-brand hover:bg-brand-dark disabled:opacity-40">
                         Keep
                       </button>
                     )}

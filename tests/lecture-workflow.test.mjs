@@ -189,7 +189,7 @@ test("only whiteboard drawings can add or remove labels; the picture activity ke
   const materials = fs.readFileSync("app/components/MaterialsView.tsx", "utf8");
   const diagramView = fs.readFileSync("app/components/DiagramView.tsx", "utf8");
   const editor = fs.readFileSync("app/components/LabelEditor.tsx", "utf8");
-  assert.match(materials, /<LabelEditor src=\{moment\.image\.dataUrl\}[^>]*canAddRemove/);
+  assert.match(materials, /<LabelEditor src=\{boardImage\(moment\)\.dataUrl\}[^>]*canAddRemove/);
   assert.doesNotMatch(diagramView, /canAddRemove/);
   assert.match(editor, /Type a name for number \$\{blank\.n\}/, "a blank name blocks Done instead of saving a blank");
 });
