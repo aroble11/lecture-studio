@@ -7,16 +7,55 @@ lecture in the browser between refreshes.
 
 What a teacher can do:
 
-- **Add a lecture:** record with the microphone, upload audio, upload a class video (MP4/MOV; only the
-  sound is transcribed), or open the built-in **Try a sample lecture** (no provider calls).
+- **Add a lecture:** record with the microphone (with Pause/Continue and **Save recording**), upload
+  audio, upload a class video (MP4/MOV; only the sound is transcribed), or open the built-in **Try a
+  sample lecture** (no provider calls).
 - **Whiteboard moments:** from a class video, the browser suggests the fullest board before each erase,
   lifts the writing off the board, and pairs kept drawings with the matching notes section.
-- **Edit:** correct the transcript, and move or rename the numbered labels on drawings and pictures.
+- **Edit:** correct the transcript; move or rename the numbered labels on drawings and pictures, and add
+  or remove labels on whiteboard drawings (students get one blank per label).
 - **Generate:** guided notes, a 5-question check for understanding, an exit ticket, a bell ringer, a
   label-the-picture activity, and teacher-only pacing and content-gap feedback.
 - **Print or save as PDF:** a student copy (no answers) or a teacher copy (answer key and feedback).
 
-The interface follows the browser's light or dark setting, with a Match browser / Light / Dark switch.
+The page shows one step at a time beside a **Your progress** list that marks each step done, current, or
+next, with live status while something runs. The interface follows the browser's light or dark setting,
+with a Match browser / Light / Dark switch.
+
+## Built for the Meta Global AI Developer Hackathon
+
+Built solo during the Meta Global AI Developer Hackathon (October 27 – November 4, 2026), Indie track,
+theme *Build for Your World*. Live app: https://lecture-studio-nine.vercel.app/
+
+**For judges:** the fastest way to try it is the live app — click **Try a sample lecture** to see finished
+materials with no account or API keys. Running it locally needs your own Meta API key (plus Baseten for the
+open-weight option and Upstash Redis for usage limits); see [Local setup](#local-setup) below.
+
+**Starting point:** the repository was created on October 27, and the app began from the standard
+`create-next-app` template (commit `7296a6d`, October 28). Everything else was built during the event.
+
+**Which Meta model does what:**
+
+| Step | Meta model | Where |
+| --- | --- | --- |
+| Transcription | Muse Voice Transcribe (`muse-voice-transcribe-1.0`) | `lib/meta-asr.ts`, `app/api/transcribe/route.ts` |
+| Materials generation | Muse Wonder (`muse-wonder-1.0`), falling back to Muse Spark (`muse-spark-1.3`) | `lib/generate.ts`, `app/api/generate/route.ts` |
+| Picture labeling | Muse Wonder plans the labels; SAM 3.1 (`sam-3.1`) finds each object precisely | `lib/label.ts`, `app/api/label/route.ts` |
+| Whiteboard drawings | Muse Wonder in board mode names the parts of each kept drawing | `lib/label.ts` (board mode) |
+| Open-weight option | Muse Spark Open (`meta-models/muse-spark-open`) on Baseten, with no Meta fallback | `lib/generate.ts`, `lib/config.ts` |
+
+All model IDs live in `lib/config.ts`. How the pieces fit:
+
+- **Realtime model as a batch transcriber.** Muse Voice Transcribe takes a live stream only. The browser
+  converts audio (or a class video's sound) to 24 kHz mono, cuts it at quiet moments into ~60 s chunks,
+  and the server streams each chunk at 2× real time, 6 at once. Lesson vocabulary biases spelling, and
+  the turn times feed the pacing feedback.
+- **Two models for one picture.** Wonder decides what is worth labeling and roughly where; SAM 3.1 returns
+  precise boxes; the closest match wins.
+- **Whiteboard moments are found for free.** The browser picks the fullest board before each erase and
+  lifts the drawing (teacher, glare, and background removed); only drawings the teacher keeps go to Wonder.
+- **Output that teachers can trust.** Generated materials are strictly validated and repaired; a failed
+  rule is named in the retry, and output that still fails never reaches the screen.
 
 ## Requirements
 
