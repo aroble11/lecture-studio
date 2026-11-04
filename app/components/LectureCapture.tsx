@@ -748,10 +748,17 @@ export default function LectureCapture() {
 
         <section className="flex flex-col gap-2">
           <h1 className="text-[clamp(30px,5vw,40px)] font-extrabold leading-[1.15] tracking-tight">
-            Turn today&apos;s lesson into <span className="bg-[linear-gradient(transparent_62%,var(--color-sun)_62%)]">tomorrow&apos;s handouts</span>.
+            <span className="whitespace-nowrap text-muted">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="mr-1.5 inline-block h-[0.85em] w-[0.85em] align-[-0.08em]"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" /><path d="M5 11a7 7 0 0 0 14 0" /><path d="M12 18v3" /></svg>
+              Lecture In,
+            </span>{" "}
+            <span className="whitespace-nowrap text-brand">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="mr-1.5 inline-block h-[0.85em] w-[0.85em] align-[-0.08em]"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
+              Handouts Out
+            </span>
           </h1>
           <p className="max-w-[640px] text-lg leading-relaxed text-muted sm:text-[19px]">
-            Record yourself teaching. Lecture Studio writes guided notes, a quick quiz, an exit ticket, and a bell ringer for you to review.
+            Record or upload your lesson. Lecture Studio turns what you actually said into guided notes, a quick quiz, an exit ticket, and a bell ringer for you to review — ready for absent students, accommodations, and review days.
           </p>
         </section>
 

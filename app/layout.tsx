@@ -17,7 +17,7 @@ const nunito = localFont({
 
 export const metadata: Metadata = {
   title: "Lecture Studio",
-  description: "Turn a recorded lecture into classroom-ready materials.",
+  description: "Lecture in, handouts out: guided notes, quizzes, and review built from what you actually said in class.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
