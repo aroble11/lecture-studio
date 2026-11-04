@@ -178,3 +178,37 @@ export function removeDiagramItem(items: DiagramItem[], n: number): DiagramItem[
   if (items.length <= 1 || !items.some((item) => item.n === n)) return items;
   return [...items].sort((a, b) => a.n - b.n).filter((item) => item.n !== n).map((item, i) => ({ ...item, n: i + 1 }));
 }
+
+// ---------- The three steps: which one shows, and what the progress list says about each ----------
+
+export type StepNumber = 1 | 2 | 3;
+/** What exists so far: a lecture (recording, upload, or sample audio), a transcript, finished materials. */
+export type StepProgress = { hasLecture: boolean; hasTranscript: boolean; hasMaterials: boolean };
+export type StepState = "current" | "done" | "open" | "locked";
+
+/** Highest step that can be opened: step 2 needs a lecture (or a transcript), step 3 needs a transcript. */
+export function lastOpenStep(p: StepProgress): StepNumber {
+  return p.hasTranscript ? 3 : p.hasLecture ? 2 : 1;
+}
+
+/** Where a teacher should land when nothing was chosen: materials if made, else the lesson step once a lecture exists. */
+export function suggestedStep(p: StepProgress): StepNumber {
+  return p.hasMaterials && p.hasTranscript ? 3 : p.hasLecture || p.hasTranscript ? 2 : 1;
+}
+
+/** The step on screen: the teacher's choice when it is open, else the furthest open step (never a locked one). */
+export function visibleStep(chosen: StepNumber | null, p: StepProgress): StepNumber {
+  const last = lastOpenStep(p);
+  return Math.min(chosen ?? suggestedStep(p), last) as StepNumber;
+}
+
+export function stepIsComplete(n: StepNumber, p: StepProgress): boolean {
+  return n === 1 ? p.hasLecture || p.hasTranscript : n === 2 ? p.hasTranscript : p.hasMaterials;
+}
+
+/** How the progress list labels a step: the one on screen, a finished one, one ready to open, or one not open yet. */
+export function stepState(n: StepNumber, shown: StepNumber, p: StepProgress): StepState {
+  if (n === shown) return "current";
+  if (stepIsComplete(n, p)) return "done";
+  return n <= lastOpenStep(p) ? "open" : "locked";
+}

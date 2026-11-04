@@ -193,3 +193,32 @@ test("only whiteboard drawings can add or remove labels; the picture activity ke
   assert.doesNotMatch(diagramView, /canAddRemove/);
   assert.match(editor, /Type a name for number \$\{blank\.n\}/, "a blank name blocks Done instead of saving a blank");
 });
+
+test("steps open in order: a lecture opens step 2, a transcript opens step 3", () => {
+  const none = { hasLecture: false, hasTranscript: false, hasMaterials: false };
+  const lecture = { ...none, hasLecture: true };
+  const transcript = { ...lecture, hasTranscript: true };
+  const materials = { ...transcript, hasMaterials: true };
+  assert.equal(w.lastOpenStep(none), 1);
+  assert.equal(w.lastOpenStep(lecture), 2);
+  assert.equal(w.lastOpenStep(transcript), 3);
+  // A restored sample can have a transcript and materials without stored audio.
+  assert.equal(w.lastOpenStep({ ...none, hasTranscript: true }), 3);
+
+  assert.equal(w.visibleStep(null, none), 1);
+  assert.equal(w.visibleStep(null, lecture), 2, "adding a lecture moves on to the lesson step");
+  assert.equal(w.visibleStep(null, transcript), 2, "a fresh transcript stays on step 2 for review");
+  assert.equal(w.visibleStep(null, materials), 3, "a restored lecture with materials opens on them");
+  assert.equal(w.visibleStep(3, lecture), 2, "a locked step is never shown");
+  assert.equal(w.visibleStep(1, materials), 1, "a teacher can go back to any open step");
+});
+
+test("the progress list marks the shown step, finished steps, open steps, and locked steps", () => {
+  const p = { hasLecture: true, hasTranscript: false, hasMaterials: false };
+  assert.deepEqual([1, 2, 3].map((n) => w.stepState(n, 2, p)), ["done", "current", "locked"]);
+  assert.deepEqual([1, 2, 3].map((n) => w.stepState(n, 1, p)), ["current", "open", "locked"]);
+  const ready = { hasLecture: true, hasTranscript: true, hasMaterials: false };
+  assert.deepEqual([1, 2, 3].map((n) => w.stepState(n, 2, ready)), ["done", "current", "open"]);
+  const finished = { ...ready, hasMaterials: true };
+  assert.deepEqual([1, 2, 3].map((n) => w.stepState(n, 3, finished)), ["done", "done", "current"]);
+});

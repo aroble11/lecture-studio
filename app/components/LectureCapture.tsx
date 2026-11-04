@@ -13,7 +13,7 @@ import { parseSampleLecture, SAMPLE_URL } from "@/lib/sample-lecture";
 import { extractVideoAudio, isVideoFile, MAX_VIDEO_BYTES } from "@/lib/video-audio";
 import type { ResultSource } from "@/lib/session-store";
 import { clearSession, loadSession, MAX_BOARD_MOMENTS, MAX_SAVED_AUDIO_BYTES, saveAudio, saveSession, type BoardMoment } from "@/lib/session-store";
-import { applyTranscriptEdits, buildLessonContext, countWords, materialsOutdated, diagramContextFor, generateRequestBody, keywordKey, lectureTooLongMessage, parseVocabulary, restoredResultSource, resumableChunks, saveStatus, snapshotResultSource, transcriptionErrorMessage, type SaveState } from "@/lib/lecture-workflow";
+import { applyTranscriptEdits, buildLessonContext, countWords, materialsOutdated, diagramContextFor, generateRequestBody, keywordKey, lastOpenStep, lectureTooLongMessage, parseVocabulary, restoredResultSource, resumableChunks, saveStatus, snapshotResultSource, stepState, transcriptionErrorMessage, visibleStep, type SaveState, type StepNumber } from "@/lib/lecture-workflow";
 import BoardMoments, { type MomentCheck } from "./BoardMoments";
 import MaterialsView from "./MaterialsView";
 import PrintableMaterials from "./PrintableMaterials";
@@ -99,6 +99,10 @@ export default function LectureCapture() {
   const [transcriptDrafts, setTranscriptDrafts] = useState<string[] | null>(null);
   const [printRequest, setPrintRequest] = useState<{ copy: PrintCopy; id: number } | null>(null);
   const [momentChecks, setMomentChecks] = useState<Record<number, MomentCheck>>({});
+  /** The step the teacher chose to look at; null = follow the lecture (see visibleStep). */
+  const [chosenStep, setChosenStep] = useState<StepNumber | null>(null);
+  const stepHeadings = useRef(new Map<StepNumber, HTMLHeadingElement>());
+  const focusStepAfterRender = useRef<StepNumber | null>(null);
   const [sampleStatus, setSampleStatus] = useState<{ kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string }>({ kind: "idle" });
   const sessionSaveAttempt = useRef(0);
   const audioSaveAttempt = useRef(0);
@@ -253,6 +257,7 @@ export default function LectureCapture() {
     if (audio) URL.revokeObjectURL(audio.url);
     labelRef.current = null;
     setAudio(null);
+    setChosenStep(null);
     setStatus({ kind: "idle" });
     setKeywords("");
     setLesson({ subject: profile?.subject ?? "", grade: profile?.grade ?? "", objective: "", standards: "" });
@@ -304,6 +309,7 @@ export default function LectureCapture() {
     });
     clearBoardMoments(); // their times belong to the previous recording
     setTranscriptDrafts(null);
+    setChosenStep(2);
     setTurns([]);
     setResult(null);
     setResultSource(null);
@@ -515,6 +521,7 @@ export default function LectureCapture() {
         : null;
       setSample({ title: parsed.title });
       setSampleStatus({ kind: "idle" });
+      setChosenStep(3);
     } catch (err) {
       if (sampleAudio) URL.revokeObjectURL(sampleAudio.url);
       if (!lectureOps.current.isCurrent(ticket)) return;
@@ -613,6 +620,19 @@ export default function LectureCapture() {
     stopMediaRecorder(recorderRef.current);
   }
 
+  /** Show a step and move keyboard focus to its heading (which also scrolls it into view). */
+  function goToStep(n: StepNumber) {
+    setChosenStep(n);
+    focusStepAfterRender.current = n;
+  }
+
+  useEffect(() => {
+    const n = focusStepAfterRender.current;
+    if (n === null) return;
+    focusStepAfterRender.current = null;
+    stepHeadings.current.get(n)?.focus();
+  });
+
   /** Pause keeps the microphone open (the browser still shows it in use) but adds nothing to the recording. */
   function pauseRecording() {
     const recorder = recorderRef.current;
@@ -706,14 +726,49 @@ export default function LectureCapture() {
   const words = countWords(turns);
   const save = saveStatus(sessionSave, audioSave, audio?.blob.size ?? 0);
   const saving = sessionSave.kind === "saving" || audioSave.kind === "saving";
-  // 1 add audio → 2 lesson + transcribe → 3 generate → 4 all done.
-  const step = result ? 4 : turns.length > 0 ? 3 : audio ? 2 : 1;
-  const STEPS = ["Add your lecture", "Tell us about the lesson", "Get your materials"];
+  // 1 add a lecture → 2 lesson details, transcript, whiteboard → 3 materials. Only the shown step is visible;
+  // the others stay mounted (hidden) so nothing in progress is lost when the teacher switches steps.
+  const progress = { hasLecture: Boolean(audio), hasTranscript: turns.length > 0, hasMaterials: Boolean(result) };
+  const shownStep = visibleStep(chosenStep, progress);
+  const lastOpen = lastOpenStep(progress);
+  const STEPS = ["Add your lecture", "Tell us about the lesson", "Get your materials"] as const;
+  const isVideo = Boolean(audio && isVideoFile({ type: audio.blob.type, name: audio.label }));
+  const outdated = Boolean(result) && materialsOutdated(turns, resultSource);
+  const lessonFilled = Boolean(lesson.subject || lesson.grade || lesson.objective || lesson.standards || keywords.trim());
+  const transcriptProgress = status.kind === "transcribing" ? status.done / Math.max(1, status.total)
+    : status.kind === "decoding" && status.progress !== undefined ? status.progress : null;
+  const transcriptLine = status.kind === "decoding"
+    ? (status.progress !== undefined ? `Reading the sound from your video… ${Math.round(status.progress * 100)}%` : "Getting your audio ready…")
+    : status.kind === "transcribing"
+      ? (status.waiting ? `Waiting for a free slot · ${status.done} of ${status.total} done` : `Transcribing · ${status.done} of ${status.total} parts`)
+      : turns.length > 0 ? `Ready · ${words} words`
+      : status.kind === "error" ? "Stopped — see the message in step 2"
+      : "Not started yet";
+  const stepWorking: Record<StepNumber, boolean> = {
+    1: recording || requestingMicrophone || loadingSample,
+    2: busy || imageStatus.kind === "analyzing",
+    3: generating,
+  };
+  const stepDetail: Record<StepNumber, string> = {
+    1: recording ? `${recordingPaused ? "Paused" : "Recording"} · ${formatTime(elapsed)}`
+      : requestingMicrophone ? "Waiting for the microphone…"
+      : loadingSample ? "Opening the sample…"
+      : sample ? `Sample: ${sample.title}`
+      : audio ? audio.label
+      : turns.length > 0 ? "Lecture added"
+      : "Record, upload, or try the sample",
+    2: transcriptLine,
+    3: generating ? `Writing your materials… ${formatTime(genElapsed)}`
+      : gen.kind === "error" ? "Didn't finish — try again"
+      : result ? (outdated ? "Made before your transcript edits" : "Ready to print")
+      : lastOpen >= 3 ? "Ready to make" : "Opens when the transcript is ready",
+  };
+  const stateLabel = { current: "You are here", done: "Done", open: "Ready", locked: "Up next" } as const;
 
   return (
     <>
       <header className="border-b border-line bg-surface print:hidden">
-        <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+        <div className="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5 text-ink">
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#ffe8a3] text-apple">
               <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7c-1.5-1-4-1.2-5.6.3C4.6 9 4.8 12.6 6.3 15.4 7.5 17.7 9.2 20 11 19.6c.6-.1.9-.4 1-.4s.4.3 1 .4c1.8.4 3.5-1.9 4.7-4.2 1.5-2.8 1.7-6.4-.1-8.1C16 5.8 13.5 6 12 7z" /><path d="M12 7c0-1.8.8-3.2 2.4-4" /></svg>
@@ -734,7 +789,7 @@ export default function LectureCapture() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-7 px-4 pb-16 pt-10 sm:px-6 print:hidden">
+      <main className="mx-auto flex w-full max-w-[1240px] flex-col gap-7 px-4 pb-16 pt-10 sm:px-6 print:hidden">
         {restored && save.attention && (
           <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sun-line bg-sun-soft px-4 py-3 text-[15px] font-semibold text-sun-ink">
             <span>{save.message}</span>
@@ -762,35 +817,80 @@ export default function LectureCapture() {
           </p>
         </section>
 
-        <ol aria-label="Progress" className="flex flex-wrap gap-2.5">
-          {STEPS.map((label, i) => {
-            const n = i + 1;
-            const current = n === step;
-            const done = n < step;
-            return (
-              <li
-                key={label}
-                aria-current={current ? "step" : undefined}
-                className={`flex items-center gap-2.5 rounded-full py-2.5 pl-2.5 pr-4 text-[15px] ${current ? "bg-brand font-extrabold text-on-brand" : "border border-line-strong bg-surface font-bold text-body"}`}
-              >
-                <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full ${current ? "bg-on-brand text-brand" : done ? "bg-ok-soft text-ok" : "bg-tint"}`}>
-                  {done ? <svg aria-label="done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5 9-10" /></svg> : n}
-                </span>
-                {label}
-              </li>
-            );
-          })}
-        </ol>
+          {sample && (
+            <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-sun-line bg-sun-soft px-4 py-3 text-[15px] text-sun-ink">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z" /></svg>
+              <span><strong>Sample lecture: {sample.title}.</strong> Its transcript is in step 2 and its materials in step 3. Nothing was sent anywhere to show this.</span>
+            </div>
+          )}
+        <div className="grid items-start gap-7 lg:grid-cols-[290px_minmax(0,1fr)]">
+          <nav aria-label="Your progress" className="rounded-3xl border border-line bg-surface p-3 sm:p-4 lg:sticky lg:top-6">
+            <h2 className="px-2 pb-2 text-[13px] font-extrabold uppercase tracking-wider text-muted">Your progress</h2>
+            <ol className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:gap-1.5">
+              {STEPS.map((title, i) => {
+                const n = (i + 1) as StepNumber;
+                const state = stepState(n, shownStep, progress);
+                const working = stepWorking[n];
+                const tone = state === "current" ? "bg-brand-soft ring-2 ring-brand"
+                  : state === "locked" ? "border border-dashed border-line-strong text-subtle"
+                  : "hover:bg-tint";
+                const body = (
+                  <>
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-extrabold ${state === "current" ? "bg-brand text-on-brand" : state === "done" ? "bg-ok-soft text-ok" : "border border-line-strong bg-tint text-muted"}`}>
+                      {state === "done" ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5 9-10" /></svg> : n}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
+                      <span className={`text-[12px] font-extrabold uppercase tracking-wide ${state === "current" ? "text-brand" : state === "done" ? "text-ok" : "text-muted"}`}>
+                        <span className="lg:hidden">Step {n}</span>
+                        <span className="hidden lg:inline">Step {n} · {stateLabel[state]}</span>
+                      </span>
+                      <span className="text-[13px] font-extrabold leading-tight sm:text-[15px] lg:text-base">{title}</span>
+                      <span className="hidden items-center gap-1.5 text-sm text-muted lg:flex">
+                        {working && <span aria-hidden="true" className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand" />}
+                        <span className="min-w-0 break-words">{stepDetail[n]}</span>
+                      </span>
+                      {n === 2 && (state === "current" || working) && progress.hasLecture && (
+                        <span className="mt-1.5 hidden flex-col gap-1.5 text-sm lg:flex">
+                          {transcriptProgress !== null && (
+                            <span className="block h-2 overflow-hidden rounded-full bg-surface"><span className="block h-full rounded-full bg-brand transition-all" style={{ width: `${Math.round(transcriptProgress * 100)}%` }} /></span>
+                          )}
+                          <span className={lessonFilled ? "text-ok" : "text-muted"}>{lessonFilled ? "✓ Lesson details" : "Lesson details · optional"}</span>
+                          {refImage && <span className="text-muted">{imageStatus.kind === "analyzing" ? "Picture · finding things to label…" : "✓ Picture to label"}</span>}
+                          {isVideo && <span className="text-muted">Whiteboard moments · {boardMoments.length > 0 ? `${boardMoments.length} kept` : "optional"}</span>}
+                        </span>
+                      )}
+                    </span>
+                  </>
+                );
+                return (
+                  <li key={title} aria-current={state === "current" ? "step" : undefined}>
+                    {state === "locked" ? (
+                      <div className={`flex h-full flex-col items-start gap-2 rounded-2xl p-2.5 lg:flex-row lg:gap-3 lg:p-3 ${tone}`}>{body}</div>
+                    ) : (
+                      <button type="button" onClick={() => goToStep(n)} className={`flex h-full w-full flex-col items-start gap-2 rounded-2xl p-2.5 lg:flex-row lg:gap-3 lg:p-3 ${tone}`}>{body}</button>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+            <p className="mt-2 flex items-center gap-2 px-2 text-sm text-muted lg:hidden">
+              {stepWorking[shownStep] && <span aria-hidden="true" className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand" />}
+              <span><span className="font-bold text-ink">Step {shownStep}:</span> {stepDetail[shownStep]}</span>
+            </p>
+            {hasWork && (
+              <div className="mt-2 border-t border-line px-1 pt-2">
+                <button onClick={startOver} disabled={controlsLocked} className="min-h-11 px-1 text-[15px] font-bold text-muted underline hover:text-ink disabled:opacity-40">
+                  Start over
+                </button>
+              </div>
+            )}
+          </nav>
+
+          <div className="flex min-w-0 flex-col gap-7">
+          <div hidden={shownStep !== 1} className="flex flex-col gap-7">
 
         <section className={cardClass}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-2xl font-extrabold">1. Add your lecture</h2>
-            {hasWork && (
-              <button onClick={startOver} disabled={controlsLocked} className="min-h-11 px-2 text-[15px] font-bold text-muted underline hover:text-ink disabled:opacity-40">
-                Start over
-              </button>
-            )}
-          </div>
+          <h2 ref={(el) => { if (el) stepHeadings.current.set(1, el); }} tabIndex={-1} className="text-2xl font-extrabold focus:outline-none">1. Add your lecture</h2>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recording ? (
@@ -868,12 +968,6 @@ export default function LectureCapture() {
           </div>
 
           {sampleStatus.kind === "error" && <p role="alert" className="text-[15px] font-semibold text-danger">{sampleStatus.message}</p>}
-          {sample && (
-            <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-sun-line bg-sun-soft px-4 py-3 text-[15px] text-sun-ink">
-              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z" /></svg>
-              <span><strong>Sample lecture: {sample.title}.</strong> Scroll down to see its transcript and materials. Nothing was sent anywhere to show this.</span>
-            </div>
-          )}
 
           <details className="group rounded-2xl bg-tint px-4 py-3.5 text-[15px] text-body">
             <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-6 gap-y-2 [&::-webkit-details-marker]:hidden">
@@ -922,9 +1016,15 @@ export default function LectureCapture() {
           )}
         </section>
 
+        {(audio || turns.length > 0) && !recording && (
+          <button onClick={() => goToStep(2)} className={`${primaryButtonClass} self-end`}>Continue to step 2 →</button>
+        )}
+          </div>
+
+          <div hidden={shownStep !== 2} className="flex flex-col gap-7">
         <section className={cardClass}>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h2 className="text-2xl font-extrabold">2. Tell us about the lesson</h2>
+            <h2 ref={(el) => { if (el) stepHeadings.current.set(2, el); }} tabIndex={-1} className="text-2xl font-extrabold focus:outline-none">2. Tell us about the lesson</h2>
             <span className="text-[15px] text-subtle">Optional — helps spell names right and fit your class</span>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -1009,7 +1109,7 @@ export default function LectureCapture() {
           </div>
 
           <BoardMoments
-            video={audio && isVideoFile({ type: audio.blob.type, name: audio.label }) ? audio.blob : null}
+            video={isVideo && audio ? audio.blob : null}
             moments={boardMoments}
             checks={momentChecks}
             disabled={controlsLocked}
@@ -1100,8 +1200,14 @@ export default function LectureCapture() {
         )}
 
         {turns.length > 0 && (
+          <button onClick={() => goToStep(3)} className={`${primaryButtonClass} self-end`}>Continue to step 3 →</button>
+        )}
+          </div>
+
+          <div hidden={shownStep !== 3} className="flex flex-col gap-7">
+        {turns.length > 0 && (
           <section className={cardClass}>
-            <h2 className="text-2xl font-extrabold">3. Get your materials</h2>
+            <h2 ref={(el) => { if (el) stepHeadings.current.set(3, el); }} tabIndex={-1} className="text-2xl font-extrabold focus:outline-none">3. Get your materials</h2>
             <p className="-mt-2 text-[15px] leading-relaxed text-muted">
               Guided notes, a 5-question check for understanding, an exit ticket, and tomorrow&apos;s bell ringer
               {refImage ? ", plus a label-the-picture activity from your image" : ""}.
@@ -1148,6 +1254,9 @@ export default function LectureCapture() {
           onDiagramItemsChange={(items) => setResultDiagram((d) => (d ? { ...d, result: { ...d.result, items } } : d))}
           onPrint={(copy) => setPrintRequest((r) => ({ copy, id: (r?.id ?? 0) + 1 }))}
         />}
+          </div>
+          </div>
+        </div>
       </main>
 
       {result && printRequest && (
