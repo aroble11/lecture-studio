@@ -1,5 +1,7 @@
 # Lecture Studio
 
+> **▶ Live app: https://lecture-studio-nine.vercel.app/** — click **Try a sample lecture** to see finished materials instantly, no account or API keys needed.
+
 Lecture Studio records or uploads a lecture and turns it into classroom materials. It can transcribe
 audio or the sound of a class video, lift whiteboard drawings out of that video and pair them with the
 guided notes, label an optional classroom image, generate teacher-facing materials, and keep the current
